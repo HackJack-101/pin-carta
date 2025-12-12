@@ -1,65 +1,382 @@
-import Image from "next/image";
+'use client';
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSession, signIn, signOut } from 'next-auth/react';
+
+import MapView from '@/components/MapView';
+import Panel from '@/components/Panel';
+import SearchBar from '@/components/SearchBar';
+import { PinStatus, RestaurantPin, type SearchResult } from '@/types';
+import { listUserPins, createUserPin, updateUserPin, deleteUserPin } from '@/lib/userPins';
+
+const PARIS_CENTER = { lat: 48.8566, lng: 2.3522 } as const;
+const LOC_KEY = 'pin-carta:loc:v1' as const;
 
 export default function Home() {
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    const { status } = useSession();
+    const [pins, setPins] = useState<RestaurantPin[]>([]);
+    const [selected, setSelected] = useState<RestaurantPin | null>(null);
+    const [draft, setDraft] = useState<Partial<RestaurantPin> & { position?: { lat: number; lng: number } }>({});
+    const [filter, setFilter] = useState<'all' | PinStatus>('all');
+
+    // Location (current geolocation) with persistence
+    const [currentLoc, setCurrentLoc] = useState<{ lat: number; lng: number }>(PARIS_CENTER);
+
+    // Search UI state
+    const [q, setQ] = useState('');
+    const [searching, setSearching] = useState(false);
+    const [results, setResults] = useState<SearchResult[]>([]);
+    const [focusAt, setFocusAt] = useState<{ lat: number; lng: number } | null>(null);
+
+    // Center used for proximity sorting (updates when user moves the map)
+    const [sortCenter, setSortCenter] = useState<{ lat: number; lng: number }>(PARIS_CENTER);
+    const userMovedRef = useRef(false);
+
+    useEffect(() => {
+        if (status !== 'authenticated') {
+            setPins([]);
+            return;
+        }
+        (async () => {
+            try {
+                const data = await listUserPins();
+                setPins(data);
+            } catch (e) {
+                console.warn('Failed to load user pins', e);
+            }
+        })();
+    }, [status]);
+
+    // Load saved location and request geolocation
+    useEffect(() => {
+        try {
+            const raw = localStorage.getItem(LOC_KEY);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (parsed && typeof parsed.lat === 'number' && typeof parsed.lng === 'number') {
+                    setCurrentLoc({ lat: parsed.lat, lng: parsed.lng });
+                }
+            }
+        } catch {}
+
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                    const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                    setCurrentLoc(loc);
+                    try {
+                        localStorage.setItem(LOC_KEY, JSON.stringify(loc));
+                    } catch {}
+                },
+                (err) => {
+                    // If user refuses or any error, fall back to Paris and persist
+                    const loc = { ...PARIS_CENTER };
+                    setCurrentLoc(loc);
+                    try {
+                        localStorage.setItem(LOC_KEY, JSON.stringify(loc));
+                    } catch {}
+                },
+                { enableHighAccuracy: true, maximumAge: 60000, timeout: 5000 },
+            );
+        } else {
+            // No geolocation API: persist Paris
+            try {
+                localStorage.setItem(LOC_KEY, JSON.stringify(PARIS_CENTER));
+            } catch {}
+            setCurrentLoc({ ...PARIS_CENTER });
+        }
+    }, []);
+
+    // Keep sortCenter in sync with currentLoc until user pans the map
+    useEffect(() => {
+        if (!userMovedRef.current) {
+            setSortCenter(currentLoc);
+        }
+    }, [currentLoc.lat, currentLoc.lng]);
+
+    function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
+        const R = 6371; // km
+        const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+        const dLon = ((b.lng - a.lng) * Math.PI) / 180;
+        const la1 = (a.lat * Math.PI) / 180;
+        const la2 = (b.lat * Math.PI) / 180;
+        const sinDLat = Math.sin(dLat / 2);
+        const sinDLon = Math.sin(dLon / 2);
+        const h = sinDLat * sinDLat + Math.cos(la1) * Math.cos(la2) * sinDLon * sinDLon;
+        return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+    }
+
+    // Debounced search effect
+    useEffect(() => {
+        let cancelled = false;
+        let timer: any;
+
+        async function run() {
+            const query = q.trim();
+            if (!query) {
+                setResults([]);
+                setSearching(false);
+                return;
+            }
+            setSearching(true);
+            try {
+                const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&limit=25`, { cache: 'no-store' });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = (await res.json()) as { results: SearchResult[] };
+                const base = data.results || [];
+                // Sort by proximity to current map center (or geolocation before any move)
+                const here = sortCenter || currentLoc || PARIS_CENTER;
+                const sorted = [...base].sort((a, b) => {
+                    const da = haversineKm(here, { lat: a.lat, lng: a.lng });
+                    const db = haversineKm(here, { lat: b.lat, lng: b.lng });
+                    return da - db;
+                });
+                if (!cancelled) setResults(sorted);
+            } catch (e) {
+                if (!cancelled) setResults([]);
+                // optionally log
+                console.warn('Search failed', e);
+            } finally {
+                if (!cancelled) setSearching(false);
+            }
+        }
+
+        timer = setTimeout(run, 250);
+        return () => {
+            cancelled = true;
+            clearTimeout(timer);
+        };
+    }, [q, sortCenter.lat, sortCenter.lng]);
+
+    const filteredPins = useMemo(() => {
+        if (filter === 'all') return pins;
+        return pins.filter((p) => p.status === filter);
+    }, [pins, filter]);
+
+    function handleCreateAt(lat: number, lng: number) {
+        // Open side form with position preset
+        setSelected(null);
+        setDraft({ position: { lat, lng }, status: 'a-essayer', tags: [] });
+    }
+
+    async function submitDraft(e: React.FormEvent) {
+        e.preventDefault();
+        if (!draft.status) return;
+
+        try {
+            if (selected) {
+                const input = {
+                    status: draft.status as PinStatus,
+                    notes: draft.notes || '',
+                    tags: (draft.tags as string[]) || [],
+                };
+                const res = await updateUserPin(selected.id, input);
+                const updated: RestaurantPin = {
+                    ...selected,
+                    ...input,
+                    updatedAt: res.updatedAt,
+                } as RestaurantPin;
+                setPins((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+                setSelected(updated);
+                setDraft(updated);
+            } else if ((draft as any).osm_id) {
+                const input = {
+                    osm_id: (draft as any).osm_id as string,
+                    status: draft.status as PinStatus,
+                    notes: draft.notes || '',
+                    tags: (draft.tags as string[]) || [],
+                };
+                try {
+                    const created = await createUserPin(input);
+                    setPins((prev) => [created, ...prev]);
+                    setSelected(created);
+                    setDraft(created);
+                } catch (err: any) {
+                    if ((err as any).code === 409) {
+                        // Already exists: select existing pin
+                        const existing = pins.find((p) => p.osm_id === (draft as any).osm_id);
+                        if (existing) {
+                            setSelected(existing);
+                            setDraft(existing);
+                        } else {
+                            // Fallback: reload list
+                            try {
+                                const reload = await listUserPins();
+                                setPins(reload);
+                                const found = reload.find((p) => p.osm_id === (draft as any).osm_id);
+                                if (found) {
+                                    setSelected(found);
+                                    setDraft(found);
+                                }
+                            } catch {}
+                        }
+                    } else {
+                        throw err;
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('Failed to submit pin', e);
+        }
+    }
+
+    function onMarkerClick(pin: RestaurantPin) {
+        // Ensure a state change even if the same pin is clicked again (so Panel's effect runs)
+        setSelected((prev) => (prev?.id === pin.id ? { ...pin } : pin));
+        setDraft(pin);
+    }
+
+    async function removeSelected() {
+        if (!selected) return;
+        const id = selected.id;
+        try {
+            await deleteUserPin(id);
+            setPins((prev) => prev.filter((p) => p.id !== id));
+            setSelected(null);
+            setDraft({});
+        } catch (e) {
+            console.warn('Failed to delete pin', e);
+        }
+    }
+
+    function cancelDraft() {
+        setDraft({});
+        if (!selected) setSelected(null);
+    }
+
+    function parseTags(input: string): string[] {
+        return input
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .slice(0, 10);
+    }
+
+    const draftTagsString = Array.isArray(draft.tags) ? (draft.tags as string[]).join(', ') : '';
+
+    // Sidebar content JSX is inlined below to keep element identity stable and avoid input remount/focus loss
+
+    if (status === 'loading') {
+        return (
+            <div className="flex h-[100dvh] w-full items-center justify-center">
+                <div className="animate-pulse text-sm text-zinc-500">Chargement…</div>
+            </div>
+        );
+    }
+
+    if (status !== 'authenticated') {
+        return (
+            <div className="flex h-[100dvh] w-full items-center justify-center bg-gradient-to-b from-white to-zinc-50">
+                <div className="mx-4 w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-8 shadow-sm">
+                    <h1 className="mb-2 text-center text-2xl font-semibold">Pin Carta</h1>
+                    <p className="mb-6 text-center text-sm text-zinc-600">Connectez-vous pour enregistrer vos restaurants favoris.</p>
+                    <button onClick={() => signIn('google')} className="flex w-full items-center justify-center gap-2 rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="h-5 w-5">
+                            <path
+                                fill="#FFC107"
+                                d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12s5.373-12,12-12 c3.059,0,5.842,1.156,7.957,3.043l5.657-5.657C33.64,6.053,29.082,4,24,4C12.955,4,4,12.955,4,24s8.955,20,20,20 c11.045,0,20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"
+                            />
+                            <path
+                                fill="#FF3D00"
+                                d="M6.306,14.691l6.571,4.819C14.655,16.361,18.961,14,24,14c3.059,0,5.842,1.156,7.957,3.043l5.657-5.657 C33.64,6.053,29.082,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"
+                            />
+                            <path
+                                fill="#4CAF50"
+                                d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.191-5.238C29.211,35.091,26.715,36,24,36 c-5.202,0-9.619-3.317-11.277-7.946l-6.57,5.061C9.463,39.556,16.13,44,24,44z"
+                            />
+                            <path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.086-4.103,5.477l6.191,5.238 C35.888,35.221,44,30.5,44,20.083z" />
+                        </svg>
+                        <span>Se connecter avec Google</span>
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="relative h-[100dvh] w-full">
+            {/* Header */}
+            <header className="pointer-events-none absolute inset-x-0 top-0 z-[1001] flex items-center justify-between px-4 py-2">
+                <div className="pointer-events-auto rounded bg-white/80 px-2 py-1 text-sm font-medium text-zinc-700 backdrop-blur">Pin Carta</div>
+                <button onClick={() => signOut()} className="pointer-events-auto rounded bg-zinc-800/80 px-3 py-1 text-xs text-white backdrop-blur hover:bg-zinc-800">
+                    Se déconnecter
+                </button>
+            </header>
+
+            {/* Map always full-viewport */}
+            <main className="relative z-0 h-[100dvh] w-full">
+                <SearchBar
+                    q={q}
+                    setQ={setQ}
+                    searching={searching}
+                    results={results}
+                    setResults={setResults}
+                    setFocusAt={setFocusAt}
+                    focusAt={focusAt}
+                    onSelectResult={(r) => {
+                        // If already saved, select it; else prepare draft tied to this place
+                        const existing = pins.find((p) => p.osm_id === r.osm_id);
+                        if (existing) {
+                            setSelected(existing);
+                            setDraft(existing);
+                        } else {
+                            const name = r.name || r.brand || r.operator || '(sans nom)';
+                            setSelected(null);
+                            setDraft({
+                                osm_id: r.osm_id,
+                                name,
+                                address: r.address,
+                                com_insee: r.com_insee,
+                                com_nom: r.com_nom,
+                                opening_hours: (r as any).opening_hours ?? null,
+                                position: { lat: r.lat, lng: r.lng },
+                                status: 'a-essayer',
+                                tags: [],
+                                notes: '',
+                            } as any);
+                        }
+                    }}
+                />
+                <MapView
+                    pins={filteredPins}
+                    onMapClick={handleCreateAt}
+                    onMarkerClick={onMarkerClick}
+                    onCenterChange={(lat, lng) => {
+                        userMovedRef.current = true;
+                        setSortCenter({ lat, lng });
+                    }}
+                    center={currentLoc}
+                    focusAt={focusAt}
+                    focusZoom={17}
+                    onFocusMarkerClick={(lat, lng) => handleCreateAt(lat, lng)}
+                />
+
+                {/* Unified bottom panel (all sizes) */}
+                <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[1000] flex justify-center">
+                    <div className="pointer-events-auto w-full max-w-xl rounded-t-2xl border-t border-zinc-200 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80">
+                        <Panel
+                            q={q}
+                            setQ={setQ}
+                            searching={searching}
+                            results={results}
+                            setResults={setResults}
+                            filter={filter}
+                            setFilter={setFilter}
+                            draft={draft}
+                            setDraft={setDraft}
+                            selected={selected}
+                            removeSelected={removeSelected}
+                            cancelDraft={cancelDraft}
+                            submitDraft={submitDraft}
+                            draftTagsString={draftTagsString}
+                            parseTags={parseTags}
+                            filteredPins={filteredPins}
+                            onMarkerClick={onMarkerClick}
+                            setFocusAt={setFocusAt}
+                        />
+                    </div>
+                </div>
+            </main>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
-  );
+    );
 }
