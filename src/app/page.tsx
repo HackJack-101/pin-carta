@@ -171,7 +171,7 @@ export default function Home() {
                     ...d,
                     address: props.name ?? props.label ?? null,
                     com_nom: props.city ?? null,
-                    com_insee: props.citycode ?? null,
+                    postal_code: props.citycode ?? null,
                 }));
             })
             .catch(() => {/* geocoding is best-effort */});
@@ -206,7 +206,7 @@ export default function Home() {
                     lng: pos.lng,
                     address: draft.address ?? null,
                     com_nom: draft.com_nom ?? null,
-                    com_insee: draft.com_insee ?? null,
+                    postal_code: draft.postal_code ?? null,
                     status: draft.status as PinStatus,
                     notes: draft.notes || '',
                     tags: (draft.tags as string[]) || [],
@@ -396,7 +396,7 @@ export default function Home() {
                                         osm_id: r.osm_id,
                                         name,
                                         address: r.address,
-                                        com_insee: r.com_insee,
+                                        postal_code: r.postal_code,
                                         com_nom: r.com_nom,
                                         opening_hours: (r as any).opening_hours ?? null,
                                         position: { lat: r.lat, lng: r.lng },

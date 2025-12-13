@@ -80,7 +80,7 @@ function PlaceInfo({ draft, selected }: Pick<PanelProps, 'draft' | 'selected'>) 
             <div className="font-semibold text-zinc-900">{draft.name || selected?.name || '(sans nom)'}</div>
             <div className="mt-1 text-zinc-600">
                 {(
-                    [draft.address ?? selected?.address, draft.com_nom ?? selected?.com_nom].filter(Boolean) as string[]
+                    [draft.address ?? selected?.address, draft.postal_code ?? selected?.postal_code, draft.com_nom ?? selected?.com_nom].filter(Boolean) as string[]
                 ).join(', ') || 'Adresse non disponible'}
             </div>
             {(draft.opening_hours ?? selected?.opening_hours) && (

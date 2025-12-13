@@ -1,7 +1,9 @@
-import Database from 'better-sqlite3';
-import path from 'path';
 import fs from 'fs';
+import path from 'path';
+
+import Database from 'better-sqlite3';
 import { NextRequest } from 'next/server';
+
 import { auth } from '@/auth';
 import { getUserDb } from '@/lib/userDb';
 
@@ -32,7 +34,7 @@ function getPlacesDb() {
 
 function hydratePins(rows: any[]) {
     const pdb = getPlacesDb();
-    const stmt = pdb.prepare(`SELECT osm_id, name, address, com_insee, com_nom, opening_hours, X as lng, Y as lat FROM places WHERE osm_id = ? LIMIT 1`);
+    const stmt = pdb.prepare(`SELECT osm_id, name, address, postal_code, com_nom, opening_hours, X as lng, Y as lat FROM places WHERE osm_id = ? LIMIT 1`);
     return rows.map((r) => {
         const isCustom = r.osm_id?.startsWith('custom_');
         const place = isCustom ? null : (stmt.get(r.osm_id) as any);
@@ -56,7 +58,7 @@ function hydratePins(rows: any[]) {
             })(),
             position: pos || { lat: 0, lng: 0 },
             address: place?.address ?? r.custom_address ?? null,
-            com_insee: place?.com_insee ?? r.custom_com_insee ?? null,
+            postal_code: place?.postal_code ?? r.custom_postal_code ?? null,
             com_nom: place?.com_nom ?? r.custom_com_nom ?? null,
             opening_hours: place?.opening_hours ?? null,
             createdAt: r.created_at,
@@ -71,7 +73,7 @@ export async function GET() {
         if (!session?.user?.email) return new Response('Unauthorized', { status: 401 });
 
         const db = getUserDb();
-        const rows = db.prepare(`SELECT id, osm_id, status, notes, tags, created_at, updated_at, custom_name, custom_lat, custom_lng, custom_address, custom_com_nom, custom_com_insee FROM user_pins WHERE user_email = ?`).all(session.user.email);
+        const rows = db.prepare(`SELECT id, osm_id, status, notes, tags, created_at, updated_at, custom_name, custom_lat, custom_lng, custom_address, custom_com_nom, custom_postal_code FROM user_pins WHERE user_email = ?`).all(session.user.email);
         const pins = hydratePins(rows);
         return new Response(JSON.stringify({ pins }), {
             status: 200,
@@ -95,7 +97,7 @@ export async function POST(req: NextRequest) {
         if (!session?.user?.email) return new Response('Unauthorized', { status: 401 });
 
         const body = await req.json();
-        const { id, osm_id, status, notes = '', tags = [], createdAt, updatedAt, name: customName, lat: customLat, lng: customLng, address: customAddress = null, com_nom: customComNom = null, com_insee: customComInsee = null } = body || {};
+        const { id, osm_id, status, notes = '', tags = [], createdAt, updatedAt, name: customName, lat: customLat, lng: customLng, address: customAddress = null, com_nom: customComNom = null, postal_code: customPostalCode = null } = body || {};
         if (!status) return new Response(JSON.stringify({ error: 'Missing status' }), { status: 400 });
 
         const db = getUserDb();
@@ -108,7 +110,7 @@ export async function POST(req: NextRequest) {
         let _custom_lng: number | null = null;
         let _custom_address: string | null = null;
         let _custom_com_nom: string | null = null;
-        let _custom_com_insee: string | null = null;
+        let _custom_postal_code: string | null = null;
 
         if (osm_id) {
             // OSM place pin — validate it exists
@@ -124,17 +126,17 @@ export async function POST(req: NextRequest) {
             _custom_lng = customLng;
             _custom_address = customAddress;
             _custom_com_nom = customComNom;
-            _custom_com_insee = customComInsee;
+            _custom_postal_code = customPostalCode;
         } else {
             return new Response(JSON.stringify({ error: 'Provide osm_id or name+lat+lng' }), { status: 400 });
         }
 
         const stmt = db.prepare(
-            `INSERT INTO user_pins (id, osm_id, status, notes, tags, created_at, updated_at, user_email, custom_name, custom_lat, custom_lng, custom_address, custom_com_nom, custom_com_insee)
+            `INSERT INTO user_pins (id, osm_id, status, notes, tags, created_at, updated_at, user_email, custom_name, custom_lat, custom_lng, custom_address, custom_com_nom, custom_postal_code)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         );
         try {
-            stmt.run(_id, _osm_id, status, notes, JSON.stringify(tags), createdAt || now, updatedAt || now, session.user.email, _custom_name, _custom_lat, _custom_lng, _custom_address, _custom_com_nom, _custom_com_insee);
+            stmt.run(_id, _osm_id, status, notes, JSON.stringify(tags), createdAt || now, updatedAt || now, session.user.email, _custom_name, _custom_lat, _custom_lng, _custom_address, _custom_com_nom, _custom_postal_code);
         } catch (err: any) {
             if (String(err?.message || err).includes('UNIQUE')) {
                 return new Response(
@@ -144,7 +146,7 @@ export async function POST(req: NextRequest) {
             }
             throw err;
         }
-        const row = db.prepare(`SELECT id, osm_id, status, notes, tags, created_at, updated_at, custom_name, custom_lat, custom_lng, custom_address, custom_com_nom, custom_com_insee FROM user_pins WHERE id = ?`).get(_id);
+        const row = db.prepare(`SELECT id, osm_id, status, notes, tags, created_at, updated_at, custom_name, custom_lat, custom_lng, custom_address, custom_com_nom, custom_postal_code FROM user_pins WHERE id = ?`).get(_id);
         const [pin] = hydratePins([row]);
         return new Response(JSON.stringify({ pin }), {
             status: 201,

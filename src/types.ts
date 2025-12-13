@@ -14,7 +14,7 @@ export interface RestaurantPin {
     tags: string[];
     position: LatLng; // hydrated from places (X/Y)
     address?: string | null; // hydrated from places
-    com_insee?: string | null; // hydrated from places
+    postal_code?: string | null; // hydrated from places
     com_nom?: string | null; // hydrated from places
     opening_hours?: string | null; // hydrated from places
     createdAt: string; // ISO
@@ -28,7 +28,7 @@ export interface SearchResult {
     brand: string | null;
     operator: string | null;
     address: string | null;
-    com_insee: string | null;
+    postal_code: string | null;
     com_nom: string | null;
     opening_hours: string | null;
     lat: number;

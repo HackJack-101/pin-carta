@@ -96,7 +96,7 @@ function initUserDb(db: Database.Database) {
     if (!colNames.includes('custom_lng'))      db.exec('ALTER TABLE user_pins ADD COLUMN custom_lng      REAL');
     if (!colNames.includes('custom_address'))  db.exec('ALTER TABLE user_pins ADD COLUMN custom_address  TEXT');
     if (!colNames.includes('custom_com_nom'))  db.exec('ALTER TABLE user_pins ADD COLUMN custom_com_nom  TEXT');
-    if (!colNames.includes('custom_com_insee'))db.exec('ALTER TABLE user_pins ADD COLUMN custom_com_insee TEXT');
+    if (!colNames.includes('custom_postal_code'))db.exec('ALTER TABLE user_pins ADD COLUMN custom_postal_code TEXT');
 
     // Ensure a default user exists (useful for legacy/migrations in dev)
     const now = new Date().toISOString();

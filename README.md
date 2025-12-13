@@ -76,7 +76,34 @@ Notes about the import script:
 - Columns are inferred from the CSV header; special types are applied to `X`, `Y` (REAL NOT NULL) and `osm_id`, `type` (TEXT NOT NULL); others are TEXT
 - Rows missing any NOT NULL column are skipped
 
-4. Run the app in dev
+4. Transform INSEE to postal code
+
+Download the CSV from [OpenData](https://public.opendatasoft.com/explore/assets/laposte_hexasmal/) and place it in `fixtures/laposte_hexasmal.csv`.
+
+```bash
+npm run transform:insee-to-postal
+```
+
+This script will update the `places` table in the SQLite database with the postal code for each place.
+
+⚠️ Unfortunately, the original file does not mention different INSEE codes for the big cities (Paris, Lyon, Marseille) "arrondissements". Hence they are all set to the city postal code (75000, 69000, 13000).
+
+I had to manually add the following rows to the CSV:
+
+```csv
+69123;LYON;69000;;LYON;45.764043000000004, 4.8356590000000005
+13055;MARSEILLE;13000;;MARSEILLE;43.296482000000004, 5.3697800000000005
+75056;PARIS;75000;;PARIS;48.856614000000004, 2.3522219999999998
+12218;CONQUES EN ROUERGUE;12320;ST CYPRIEN SUR DOURDOU;CONQUES EN ROUERGUE;44.584457836, 2.38991706
+69114;PORTE DES PIERRES DOREES;69400;POUILLY LE MONIAL;PORTE DES PIERRES DOREES;45.964652572, 4.649093816
+85212;SAINTE-FLORENCE;85140;;SAINTE-FLORENCE;
+15047;CHAVAGNAC;15300;;CHAVAGNAC;
+49126;OREE D ANJOU;49530;OREE D ANJOU;47.309539794, -1.201383399
+15035;CHALINARGUES;15170;;CHALINARGUES;
+85165;L OIE;85140;L OIE;;46.782884747, -1.210128642
+```
+
+5. Run the app in dev
 
 ```bash
 npm run dev
@@ -133,7 +160,7 @@ Notable dependencies:
 
 - Places database (read-only):
     - Default location: `./src/database/places.sqlite` (can be overridden by `DB_PATH`)
-    - `GET /api/search` opens this DB in read-only mode and runs a LIKE search on `name`, `brand`, and `operator`. Returned fields include `osm_id`, `type`, `name`, `brand`, `operator`, `address`, `com_insee`, `com_nom`, `opening_hours`, and coordinates as `lat`/`lng` (from `Y`/`X`)
+    - `GET /api/search` opens this DB in read-only mode and runs a LIKE search on `name`, `brand`, and `operator`. Returned fields include `osm_id`, `type`, `name`, `brand`, `operator`, `address`, `postal_code`, `com_nom`, `opening_hours`, and coordinates as `lat`/`lng` (from `Y`/`X`)
 
 - User database (read-write):
     - Default location: `./src/database/user.sqlite` (or `USER_DB_PATH`)
@@ -158,7 +185,7 @@ All routes are under the Next.js App Router.
 
 - GET /api/search?q=<text>&limit=<n>
     - Query params: `q` (required), `limit` (optional, 1–100, default 20)
-    - Response: `{ results: Array<{ osm_id, type, name, brand, operator, address, com_insee, com_nom, opening_hours, lat, lng }> }`
+    - Response: `{ results: Array<{ osm_id, type, name, brand, operator, address, postal_code, com_nom, opening_hours, lat, lng }> }`
     - Errors: 500 if DB is missing or query fails
 
 - GET /api/user-pins

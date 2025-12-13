@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+
 import type { SearchResult } from '@/types';
 
 export interface SearchBarProps {
@@ -85,7 +86,7 @@ export default function SearchBar({ q, setQ, searching, results, setResults, set
                                                     <div className="mt-0.5 text-xs text-zinc-600">{subtitleParts.join(' · ')}</div>
                                                 )}
                                                 <div className="mt-0.5 text-[11px] text-zinc-500">
-                                                    {[r.address, r.com_insee, r.com_nom].filter(Boolean).join(' · ') || "(pas d'adresse)"}
+                                                    {[r.address, r.postal_code, r.com_nom].filter(Boolean).join(' · ') || "(pas d'adresse)"}
                                                 </div>
                                             </button>
                                         </li>

@@ -1,6 +1,7 @@
-import Database from 'better-sqlite3';
-import path from 'path';
 import fs from 'fs';
+import path from 'path';
+
+import Database from 'better-sqlite3';
 import { NextRequest } from 'next/server';
 
 export const runtime = 'nodejs';
@@ -43,9 +44,9 @@ export async function GET(req: NextRequest) {
         const database = getDb();
         const like = `%${q.replace(/[%_]/g, '')}%`;
 
-        // Columns: name, address, com_insee, com_nom, osm_id, type, brand, operator
+        // Columns: name, address, postal_code, com_nom, osm_id, type, brand, operator
         const sql = `
-      SELECT osm_id, type, name, brand, operator, address, com_insee, com_nom, opening_hours, X as lng, Y as lat
+      SELECT osm_id, type, name, brand, operator, address, postal_code, com_nom, opening_hours, X as lng, Y as lat
       FROM places
       WHERE (
         name LIKE @like OR

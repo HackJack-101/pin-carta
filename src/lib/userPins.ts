@@ -8,7 +8,7 @@ export async function listUserPins(): Promise<RestaurantPin[]> {
     return (data.pins || []) as RestaurantPin[];
 }
 
-export async function createCustomPin(input: { name: string; lat: number; lng: number; address?: string | null; com_nom?: string | null; com_insee?: string | null; status: RestaurantPin['status']; notes?: string; tags?: string[] }): Promise<RestaurantPin> {
+export async function createCustomPin(input: { name: string; lat: number; lng: number; address?: string | null; com_nom?: string | null; postal_code?: string | null; status: RestaurantPin['status']; notes?: string; tags?: string[] }): Promise<RestaurantPin> {
     const res = await fetch('/api/user-pins', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
