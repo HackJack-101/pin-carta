@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { RestaurantPin } from '@/types';
 
 // We import Leaflet dynamically inside effects to avoid SSR issues.
@@ -15,6 +15,10 @@ export interface MapViewProps {
     focusAt?: { lat: number; lng: number } | null; // center and highlight a temporary marker
     focusZoom?: number;
     onFocusMarkerClick?: (lat: number, lng: number) => void;
+    /** Bottom panel height on mobile — used to offset flyTo so the pin lands in visible area */
+    mobilePanelPeekHeight?: number;
+    /** Right sidebar width on desktop — used to offset flyTo so the pin lands in visible area */
+    desktopSidebarWidth?: number;
 }
 
 export default function MapView({
@@ -27,6 +31,8 @@ export default function MapView({
     focusAt = null,
     focusZoom = 17,
     onFocusMarkerClick,
+    mobilePanelPeekHeight = 0,
+    desktopSidebarWidth = 0,
 }: MapViewProps) {
     const mapRef = useRef<any>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
@@ -34,6 +40,25 @@ export default function MapView({
     const focusMarkerRef = useRef<any>(null);
     const onCenterChangeRef = useRef<((lat: number, lng: number) => void) | null>(null);
     const suppressNextCenterRef = useRef<boolean>(false);
+    const mobilePanelPeekHeightRef = useRef(mobilePanelPeekHeight);
+    const desktopSidebarWidthRef = useRef(desktopSidebarWidth);
+    const moveEndHandlerRef = useRef<(() => void) | null>(null);
+    const resizeCleanupRef = useRef<(() => void) | null>(null);
+    const [mapReady, setMapReady] = useState(false);
+
+    useEffect(() => { mobilePanelPeekHeightRef.current = mobilePanelPeekHeight; }, [mobilePanelPeekHeight]);
+    useEffect(() => { desktopSidebarWidthRef.current = desktopSidebarWidth; }, [desktopSidebarWidth]);
+
+    /** Returns an adjusted LatLng so the target point lands in the center of the visible map area. */
+    function offsetCenter(map: any, lat: number, lng: number, targetZoom: number): [number, number] {
+        const isMobile = window.innerWidth < 768;
+        const offsetX = isMobile ? 0 : desktopSidebarWidthRef.current / 2;
+        const offsetY = isMobile ? mobilePanelPeekHeightRef.current / 2 : 0;
+        if (offsetX === 0 && offsetY === 0) return [lat, lng];
+        const projected = map.project([lat, lng], targetZoom);
+        const adjusted = map.unproject([projected.x + offsetX, projected.y + offsetY], targetZoom);
+        return [adjusted.lat, adjusted.lng];
+    }
 
     // Keep latest onCenterChange in a ref so event handler can call it
     useEffect(() => {
@@ -80,13 +105,16 @@ export default function MapView({
                 if (fn) fn(c.lat, c.lng);
             };
             map.on('moveend', handleMoveEnd);
-            (map as any)._onCenterChangeHandler = handleMoveEnd;
+            moveEndHandlerRef.current = handleMoveEnd;
 
             // Layer to hold markers for easier refresh
             markersLayerRef.current = L.layerGroup().addTo(map);
 
+            // Move zoom control to bottom-right
+            map.zoomControl.setPosition('bottomright');
+
             // Add a control button to center on user's current location
-            const locateControl: any = L.control({ position: 'topleft' });
+            const locateControl: any = (L.control as any)({ position: 'bottomright' });
             locateControl.onAdd = function () {
                 const container = L.DomUtil.create('div', 'leaflet-bar');
                 const btn = L.DomUtil.create('button', '', container) as HTMLButtonElement;
@@ -131,17 +159,15 @@ export default function MapView({
             locateControl.addTo(map);
 
             // initial draw
-            redrawMarkers();
+            redrawMarkers().catch((e) => console.error('redrawMarkers failed', e));
 
             // ensure size is correct after mount and on orientation/resize
-            setTimeout(() => map.invalidateSize(), 0);
+            setTimeout(() => { map.invalidateSize(); setMapReady(true); }, 0);
             const onResize = () => map.invalidateSize();
             window.addEventListener('resize', onResize);
             // some mobile browsers fire orientationchange without resize
             window.addEventListener('orientationchange', onResize);
-
-            // cleanup listeners on unmount
-            (map as any)._onResizeCleanup = () => {
+            resizeCleanupRef.current = () => {
                 window.removeEventListener('resize', onResize);
                 window.removeEventListener('orientationchange', onResize);
             };
@@ -150,9 +176,9 @@ export default function MapView({
         return () => {
             destroyed = true;
             if (mapRef.current) {
-                const map: any = mapRef.current;
-                if (map._onCenterChangeHandler) map.off('moveend', map._onCenterChangeHandler);
-                if (map._onResizeCleanup) map._onResizeCleanup();
+                const map = mapRef.current;
+                if (moveEndHandlerRef.current) map.off('moveend', moveEndHandlerRef.current);
+                resizeCleanupRef.current?.();
                 map.remove();
                 mapRef.current = null;
             }
@@ -162,25 +188,28 @@ export default function MapView({
 
     // Redraw markers when pins change
     useEffect(() => {
-        redrawMarkers();
+        redrawMarkers().catch((e) => console.error('redrawMarkers failed', e));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [pins]);
 
-    // React to center/zoom prop changes after map is initialized
+    // React to center/zoom prop changes after map is initialized.
+    // Skip if focusAt is active — focusAt takes priority over the background center.
     useEffect(() => {
-        (async () => {
-            if (!mapRef.current) return;
-            const map = mapRef.current;
-            (suppressNextCenterRef as any).current = true;
-            map.flyTo([center.lat, center.lng], zoom, { duration: 0.5 });
-        })();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [center?.lat, center?.lng, zoom]);
+        if (!mapReady || !mapRef.current) return;
+        if (focusAt) return;
+        const map = mapRef.current;
+        (suppressNextCenterRef as any).current = true;
+        const [adjLat, adjLng] = offsetCenter(map, center.lat, center.lng, zoom);
+        map.flyTo([adjLat, adjLng], zoom, { duration: 0.5 });
+         
+    }, [center?.lat, center?.lng, zoom, mapReady, focusAt]);
 
-    // React to focusAt changes: center and add temporary marker
+    // React to focusAt changes: center and add temporary marker.
+    // Also re-runs when mapReady flips to true, so a focusAt set before the map
+    // finished initializing is not silently dropped.
     useEffect(() => {
+        if (!mapReady || !mapRef.current) return;
         (async () => {
-            if (!mapRef.current) return;
             const map = mapRef.current;
             const L = await import('leaflet');
             if (focusMarkerRef.current) {
@@ -189,7 +218,8 @@ export default function MapView({
             }
             if (focusAt) {
                 (suppressNextCenterRef as any).current = true;
-                map.flyTo([focusAt.lat, focusAt.lng], focusZoom, { duration: 0.5 });
+                const [adjLat, adjLng] = offsetCenter(map, focusAt.lat, focusAt.lng, focusZoom);
+                map.flyTo([adjLat, adjLng], focusZoom, { duration: 0.5 });
                 // Add a highlighted marker (default icon)
                 const marker = L.marker([focusAt.lat, focusAt.lng]);
                 marker.addTo(map);
@@ -199,8 +229,8 @@ export default function MapView({
                 focusMarkerRef.current = marker;
             }
         })();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [focusAt, focusZoom, onFocusMarkerClick]);
+         
+    }, [focusAt, focusZoom, onFocusMarkerClick, mapReady]);
 
     function statusColor(status: RestaurantPin['status']) {
         return status === 'deja-essaye' ? '#16a34a' : '#f59e0b'; // green or amber

@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import type { Dispatch, SetStateAction, FormEvent } from 'react';
 import { PinStatus, PinStatusLabel, RestaurantPin, type SearchResult } from '@/types';
+import { PANEL_PEEK_HEIGHT_PX } from '@/lib/layout';
 
 export interface PanelProps {
     q: string;
@@ -20,9 +21,173 @@ export interface PanelProps {
     submitDraft: (e: FormEvent) => void;
     draftTagsString: string;
     parseTags: (s: string) => string[];
-    filteredPins: RestaurantPin[];
-    onMarkerClick: (p: RestaurantPin) => void;
-    setFocusAt: (pos: { lat: number; lng: number } | null) => void;
+    /**
+     * 'sheet'   — mobile bottom sheet with idle/peek/open states (default)
+     * 'sidebar' — desktop right sidebar, always shows full content
+     */
+    variant?: 'sheet' | 'sidebar';
+}
+
+const FILTER_VALUES = ['all', 'a-essayer', 'deja-essaye'] as const;
+
+type SheetState = 'idle' | 'peek' | 'open';
+
+function FilterChips({
+    filter,
+    setFilter,
+    shrink,
+}: {
+    filter: 'all' | PinStatus;
+    setFilter: (v: 'all' | PinStatus) => void;
+    shrink?: boolean;
+}) {
+    return (
+        <>
+            {FILTER_VALUES.map((f) => (
+                <button
+                    key={f}
+                    type="button"
+                    onClick={() => setFilter(f)}
+                    className={`rounded-xl px-3 py-2 text-xs font-medium transition-all duration-200 ${shrink ? 'shrink-0' : ''} ${
+                        filter === f
+                            ? 'bg-zinc-900 text-white shadow-sm'
+                            : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-700'
+                    }`}
+                >
+                    {f === 'all' ? 'Tous' : PinStatusLabel[f]}
+                </button>
+            ))}
+        </>
+    );
+}
+
+function StatusBadge({ status }: { status: PinStatus }) {
+    const isEssaye = status === 'deja-essaye';
+    return (
+        <span
+            className={`shrink-0 rounded-lg px-2 py-1 text-[11px] font-semibold ${
+                isEssaye ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+            }`}
+        >
+            {PinStatusLabel[status]}
+        </span>
+    );
+}
+
+function PlaceInfo({ draft, selected }: Pick<PanelProps, 'draft' | 'selected'>) {
+    return (
+        <div className="mb-5 rounded-2xl border border-zinc-100 bg-zinc-50/80 p-4 text-sm">
+            <div className="font-semibold text-zinc-900">{draft.name || selected?.name || '(sans nom)'}</div>
+            <div className="mt-1 text-zinc-600">
+                {(
+                    [draft.address ?? selected?.address, draft.com_nom ?? selected?.com_nom].filter(Boolean) as string[]
+                ).join(', ') || 'Adresse non disponible'}
+            </div>
+            {(draft.opening_hours ?? selected?.opening_hours) && (
+                <div className="mt-1 text-xs text-zinc-500">{draft.opening_hours ?? selected?.opening_hours}</div>
+            )}
+        </div>
+    );
+}
+
+function EditForm({
+    draft,
+    setDraft,
+    selected,
+    removeSelected,
+    cancelDraft,
+    submitDraft,
+    draftTagsString,
+    parseTags,
+}: Pick<PanelProps, 'draft' | 'setDraft' | 'selected' | 'removeSelected' | 'cancelDraft' | 'submitDraft' | 'draftTagsString' | 'parseTags'>) {
+    const draftOsmId = (draft as RestaurantPin).osm_id;
+    const isCustom = !selected && !draftOsmId && !!(draft as any).position;
+    return (
+        <form onSubmit={submitDraft} className="mb-6 space-y-4">
+            {isCustom && (
+                <div>
+                    <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-zinc-500">Nom du restaurant</label>
+                    <input
+                        required
+                        autoFocus
+                        className="w-full rounded-xl border border-zinc-200 bg-white p-2.5 text-sm text-zinc-900 caret-zinc-900 transition-colors focus:border-zinc-400 focus:outline-none"
+                        placeholder="Nom du restaurant…"
+                        value={draft.name || ''}
+                        onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+                    />
+                    {(draft.address || draft.com_nom) && (
+                        <p className="mt-1.5 text-xs text-zinc-500">
+                            📍 {[draft.address, draft.com_nom].filter(Boolean).join(', ')}
+                        </p>
+                    )}
+                </div>
+            )}
+            <div>
+                <label className="mb-2 block text-[11px] font-medium uppercase tracking-wide text-zinc-500">Statut</label>
+                <div className="flex gap-2">
+                    {(['a-essayer', 'deja-essaye'] as const).map((s) => (
+                        <button
+                            key={s}
+                            type="button"
+                            onClick={() => setDraft((d) => ({ ...d, status: s }))}
+                            className={`flex-1 rounded-xl border px-3 py-2 text-sm font-medium transition-all duration-200 ${
+                                draft.status === s
+                                    ? s === 'a-essayer'
+                                        ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                        : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                    : 'border-zinc-200 text-zinc-500 hover:bg-zinc-50 hover:text-zinc-700'
+                            }`}
+                        >
+                            {PinStatusLabel[s]}
+                        </button>
+                    ))}
+                </div>
+            </div>
+            <div>
+                <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-zinc-500">Tags</label>
+                <input
+                    className="w-full rounded-xl border border-zinc-200 bg-white p-2.5 text-sm text-zinc-900 caret-zinc-900 transition-colors focus:border-zinc-400 focus:outline-none"
+                    placeholder="italien, terrasse, pas cher…"
+                    value={draftTagsString}
+                    onChange={(e) => setDraft((d) => ({ ...d, tags: parseTags(e.target.value) }))}
+                />
+            </div>
+            <div>
+                <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-zinc-500">Notes</label>
+                <textarea
+                    className="h-24 w-full resize-none rounded-xl border border-zinc-200 bg-white p-2.5 text-sm text-zinc-900 caret-zinc-900 transition-colors focus:border-zinc-400 focus:outline-none"
+                    placeholder="Vos remarques, plats à tester, prix…"
+                    value={draft.notes || ''}
+                    onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))}
+                />
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+                {selected && (
+                    <button
+                        type="button"
+                        onClick={removeSelected}
+                        className="shrink-0 rounded-xl border border-red-200 px-4 py-2.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
+                    >
+                        Supprimer
+                    </button>
+                )}
+                <button
+                    type="button"
+                    onClick={cancelDraft}
+                    className="flex-1 rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-50"
+                >
+                    Annuler
+                </button>
+                <button
+                    type="submit"
+                    disabled={!draft.status || (!selected && !draftOsmId && !(isCustom && draft.name))}
+                    className="flex-1 rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                    {selected ? 'Mettre à jour' : 'Enregistrer'}
+                </button>
+            </div>
+        </form>
+    );
 }
 
 export default function Panel({
@@ -41,152 +206,167 @@ export default function Panel({
     submitDraft,
     draftTagsString,
     parseTags,
-    filteredPins,
-    onMarkerClick,
-    setFocusAt,
+    variant = 'sheet',
 }: PanelProps) {
-    const [open, setOpen] = useState(false);
+    const [sheetState, setSheetState] = useState<SheetState>('idle');
 
-    // Open the panel automatically when a marker is selected or a place is chosen from search
-    useEffect(() => {
-        if (selected || (draft as any).osm_id) setOpen(true);
-    }, [selected, (draft as any).osm_id]);
+    const draftOsmId = (draft as RestaurantPin).osm_id;
+    const hasPlace = selected || draftOsmId || !!(draft as any).position;
+    const placeName = draft.name || selected?.name || '(sans nom)';
+    const placeAddress = (
+        [draft.address ?? selected?.address, draft.com_nom ?? selected?.com_nom].filter(Boolean) as string[]
+    ).join(', ') || 'Adresse non disponible';
+    const placeStatus = (draft.status ?? selected?.status) as PinStatus | undefined;
 
-    // Nudge Leaflet to recalc size after panel open/close animation
+    // Auto-transition sheet state when a place is selected/deselected
     useEffect(() => {
+        if (hasPlace) {
+            setSheetState((s) => (s === 'idle' ? 'peek' : s));
+        } else {
+            setSheetState('idle');
+        }
+    }, [hasPlace]);
+
+    // Nudge Leaflet to recalc size after sheet state change animation
+    useEffect(() => {
+        if (variant !== 'sheet') return;
         const timer = setTimeout(() => {
             window.dispatchEvent(new Event('resize'));
         }, 320);
         return () => clearTimeout(timer);
-    }, [open]);
+    }, [sheetState, variant]);
+
+    // ── Sidebar variant: always show full content, no collapsing ──────────────
+    if (variant === 'sidebar') {
+        return (
+            <div className="flex flex-col h-full">
+                {/* Header */}
+                <div className="px-5 pt-5 pb-4 border-b border-zinc-100">
+                    <div className="flex flex-wrap gap-2">
+                        <FilterChips filter={filter} setFilter={setFilter} />
+                    </div>
+                </div>
+
+                {/* Content */}
+                <div className="flex-1 overflow-y-auto px-5 py-5">
+                    {!hasPlace ? (
+                        <p className="text-center text-sm text-zinc-500 pt-4">
+                            Recherchez un restaurant ou cliquez sur la carte pour ajouter un pin.
+                        </p>
+                    ) : (
+                        <>
+                            {(selected || (draft as RestaurantPin).osm_id) && <PlaceInfo draft={draft} selected={selected} />}
+                            <EditForm
+                                draft={draft}
+                                setDraft={setDraft}
+                                selected={selected}
+                                removeSelected={removeSelected}
+                                cancelDraft={cancelDraft}
+                                submitDraft={submitDraft}
+                                draftTagsString={draftTagsString}
+                                parseTags={parseTags}
+                            />
+                        </>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
+    // ── Sheet variant (mobile bottom sheet) ──────────────────────────────────
+    const sheetMaxHeight =
+        sheetState === 'open' ? '75vh' : sheetState === 'peek' ? `${PANEL_PEEK_HEIGHT_PX}px` : '4.5rem';
 
     return (
-        <div className={`pointer-events-auto w-full transition-[max-height] duration-300 ${open ? 'max-h-[72vh]' : 'max-h-14'}`}>
-            {/* Grab handle + header */}
-            <button className="flex w-full items-center justify-between gap-3 px-4 pt-2 pb-2" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-controls="panel-content">
-                <span className="mx-auto flex items-center gap-3">
-                    <span className="h-1.5 w-10 rounded-full bg-zinc-300" />
-                </span>
+        <div style={{ maxHeight: sheetMaxHeight }} className="pointer-events-auto w-full overflow-hidden transition-[max-height] duration-300 ease-in-out">
+            {/* Drag handle — always visible, toggles peek ↔ open */}
+            <button
+                type="button"
+                className="flex w-full items-center justify-center px-4 pt-3 pb-2"
+                onClick={() => {
+                    if (sheetState === 'idle') return;
+                    setSheetState((s) => (s === 'open' ? 'peek' : 'open'));
+                }}
+                aria-label={sheetState === 'open' ? 'Réduire le panneau' : 'Agrandir le panneau'}
+            >
+                <span
+                    className={`h-1 w-10 rounded-full transition-colors ${
+                        sheetState === 'open' ? 'bg-zinc-400' : 'bg-zinc-300'
+                    }`}
+                />
             </button>
 
-            {/* Content */}
-            {open && (
+            {/* Idle state: filter chips */}
+            {sheetState === 'idle' && (
+                <div className="flex items-center gap-2 overflow-x-auto px-4 pb-[calc(0.75rem+var(--safe-bottom))] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                    <FilterChips filter={filter} setFilter={setFilter} shrink />
+                </div>
+            )}
+
+            {/* Peek state: compact place card */}
+            {sheetState === 'peek' && hasPlace && (
+                <div className="px-4 pb-3">
+                    <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-semibold text-zinc-900">{placeName}</p>
+                            <p className="truncate text-xs text-zinc-600">{placeAddress}</p>
+                        </div>
+                        {placeStatus && <StatusBadge status={placeStatus} />}
+                    </div>
+                    <div className="mt-3 flex gap-2">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setSheetState('idle');
+                                cancelDraft();
+                            }}
+                            className="flex-1 rounded-xl border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50"
+                        >
+                            Fermer
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setSheetState('open')}
+                            className="flex-1 rounded-xl bg-zinc-900 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-zinc-800"
+                        >
+                            Modifier
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Open state: full edit form */}
+            {sheetState === 'open' && (
                 <div
                     id="panel-content"
-                    className="max-h-[64vh] overflow-y-auto px-4 pb-[calc(1rem+var(--safe-bottom))]"
+                    className="max-h-[66vh] overflow-y-auto px-5 pb-[calc(1.5rem+var(--safe-bottom))] sm:px-6"
                     role="region"
                     aria-label="Panneau d'édition et de recherche"
                 >
-                    {/* Place info (read-only) */}
-                    <div className="mb-4 space-y-1 rounded border border-zinc-200 bg-zinc-50 p-3 text-sm">
-                        <div>
-                            <span className="text-xs text-zinc-600">Nom</span>
-                            <div className="font-medium">{draft.name || selected?.name || '(sans nom)'}</div>
-                        </div>
-                        <div>
-                            <span className="text-xs text-zinc-600">Adresse complète</span>
-                            <div className="text-zinc-700">
-                                {(
-                                    [draft.address ?? selected?.address, draft.com_insee ?? selected?.com_insee, draft.com_nom ?? selected?.com_nom].filter(Boolean) as string[]
-                                ).join(' · ') || 'Non disponible'}
+                    {!hasPlace ? (
+                        <div className="py-2 pb-6">
+                            <div className="mb-4 flex flex-wrap gap-2">
+                                <FilterChips filter={filter} setFilter={setFilter} />
                             </div>
+                            <p className="text-center text-sm text-zinc-500">
+                                Recherchez un restaurant ou cliquez sur la carte pour ajouter un pin.
+                            </p>
                         </div>
-                        <div>
-                            <span className="text-xs text-zinc-600">Horaires d&#39;ouverture</span>
-                            <div className="text-zinc-700">{(draft.opening_hours ?? selected?.opening_hours) || 'Non disponible'}</div>
-                        </div>
-                    </div>
-
-                    {/* Form (user data) */}
-                    <form onSubmit={submitDraft} className="mb-6 space-y-3">
-                        <div>
-                            <label className="mb-1 block text-xs text-zinc-600">Statut</label>
-                            <select
-                                className="w-full rounded border border-zinc-300 p-2 text-sm"
-                                value={draft.status || 'a-essayer'}
-                                onChange={(e) =>
-                                    setDraft((d) => ({
-                                        ...d,
-                                        status: e.target.value as PinStatus,
-                                    }))
-                                }
-                            >
-                                <option value="a-essayer">à essayer</option>
-                                <option value="deja-essaye">déjà essayé</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label className="mb-1 block text-xs text-zinc-600">Tags (séparés par des virgules)</label>
-                            <input
-                                className="w-full rounded border border-zinc-300 p-2 text-sm"
-                                placeholder="ex: italien, terrasse, pas cher"
-                                value={draftTagsString}
-                                onChange={(e) => setDraft((d) => ({ ...d, tags: parseTags(e.target.value) }))}
+                    ) : (
+                        <>
+                            {(selected || (draft as RestaurantPin).osm_id) && <PlaceInfo draft={draft} selected={selected} />}
+                            <EditForm
+                                draft={draft}
+                                setDraft={setDraft}
+                                selected={selected}
+                                removeSelected={removeSelected}
+                                cancelDraft={cancelDraft}
+                                submitDraft={submitDraft}
+                                draftTagsString={draftTagsString}
+                                parseTags={parseTags}
                             />
-                        </div>
-                        <div>
-                            <label className="mb-1 block text-xs text-zinc-600">Notes</label>
-                            <textarea
-                                className="h-24 w-full rounded border border-zinc-300 p-2 text-sm"
-                                placeholder="Vos remarques, plats à tester, prix, etc."
-                                value={draft.notes || ''}
-                                onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))}
-                            />
-                        </div>
-                        <div className="flex items-center justify-between">
-                            <div className="text-xs text-zinc-500">
-                                {draft.position ? (
-                                    <span>
-                                        Position: {draft.position.lat.toFixed(5)}, {draft.position.lng.toFixed(5)}
-                                    </span>
-                                ) : (
-                                    <span>Position inconnue</span>
-                                )}
-                            </div>
-                            <div className="flex gap-2">
-                                {selected && (
-                                    <button type="button" onClick={removeSelected} className="rounded border border-red-200 px-3 py-2 text-sm text-red-700">
-                                        Supprimer
-                                    </button>
-                                )}
-                                <button type="button" onClick={cancelDraft} className="rounded border border-zinc-200 px-3 py-2 text-sm">
-                                    Annuler
-                                </button>
-                                <button
-                                    type="submit"
-                                    disabled={!draft.status || (!selected && !draft.osm_id)}
-                                    className="rounded bg-blue-600 px-3 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-50"
-                                >
-                                    {selected ? 'Mettre à jour' : 'Enregistrer'}
-                                </button>
-                            </div>
-                        </div>
-                    </form>
-
-                    {/* List */}
-                    <div>
-                        <h2 className="mb-2 text-sm font-medium text-zinc-700">Mes restaurants</h2>
-                        <ul className="flex max-h-64 flex-col gap-2 overflow-auto pr-1">
-                            {filteredPins.map((p) => (
-                                <li key={p.id} className="cursor-pointer rounded border border-zinc-200 p-2 hover:bg-zinc-50" onClick={() => onMarkerClick(p)}>
-                                    <div className="flex items-center justify-between text-sm">
-                                        <span className="font-medium">{p.name}</span>
-                                        <span className="text-xs text-zinc-500">{PinStatusLabel[p.status]}</span>
-                                    </div>
-                                    {p.tags?.length ? (
-                                        <div className="mt-1 flex flex-wrap gap-1">
-                                            {p.tags.map((t) => (
-                                                <span key={t} className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-700">
-                                                    {t}
-                                                </span>
-                                            ))}
-                                        </div>
-                                    ) : null}
-                                </li>
-                            ))}
-                            {!filteredPins.length && <li className="text-sm text-zinc-500">Aucun pin pour ce filtre.</li>}
-                        </ul>
-                    </div>
+                        </>
+                    )}
                 </div>
             )}
         </div>

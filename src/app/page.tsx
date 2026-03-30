@@ -4,12 +4,28 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
 
 import MapView from '@/components/MapView';
+import NavBar from '@/components/NavBar';
+import type { ViewType } from '@/components/NavBar';
 import Panel from '@/components/Panel';
+import SavedAddresses from '@/components/SavedAddresses';
 import SearchBar from '@/components/SearchBar';
 import { PinStatus, RestaurantPin, type SearchResult } from '@/types';
-import { listUserPins, createUserPin, updateUserPin, deleteUserPin } from '@/lib/userPins';
+import { listUserPins, createUserPin, createCustomPin, updateUserPin, deleteUserPin } from '@/lib/userPins';
+import { PANEL_PEEK_HEIGHT_PX, DESKTOP_SIDEBAR_WIDTH_PX } from '@/lib/layout';
 
 const PARIS_CENTER = { lat: 48.8566, lng: 2.3522 } as const;
+
+function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
+    const R = 6371;
+    const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+    const dLon = ((b.lng - a.lng) * Math.PI) / 180;
+    const la1 = (a.lat * Math.PI) / 180;
+    const la2 = (b.lat * Math.PI) / 180;
+    const sinDLat = Math.sin(dLat / 2);
+    const sinDLon = Math.sin(dLon / 2);
+    const h = sinDLat * sinDLat + Math.cos(la1) * Math.cos(la2) * sinDLon * sinDLon;
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
 const LOC_KEY = 'pin-carta:loc:v1' as const;
 
 export default function Home() {
@@ -18,6 +34,7 @@ export default function Home() {
     const [selected, setSelected] = useState<RestaurantPin | null>(null);
     const [draft, setDraft] = useState<Partial<RestaurantPin> & { position?: { lat: number; lng: number } }>({});
     const [filter, setFilter] = useState<'all' | PinStatus>('all');
+    const [view, setView] = useState<ViewType>('map');
 
     // Location (current geolocation) with persistence
     const [currentLoc, setCurrentLoc] = useState<{ lat: number; lng: number }>(PARIS_CENTER);
@@ -68,13 +85,12 @@ export default function Home() {
                         localStorage.setItem(LOC_KEY, JSON.stringify(loc));
                     } catch {}
                 },
-                (err) => {
-                    // If user refuses or any error, fall back to Paris and persist
-                    const loc = { ...PARIS_CENTER };
-                    setCurrentLoc(loc);
-                    try {
-                        localStorage.setItem(LOC_KEY, JSON.stringify(loc));
-                    } catch {}
+                () => {
+                    // Only overwrite with Paris if there is no previously cached location
+                    if (!localStorage.getItem(LOC_KEY)) {
+                        setCurrentLoc({ ...PARIS_CENTER });
+                        try { localStorage.setItem(LOC_KEY, JSON.stringify(PARIS_CENTER)); } catch {}
+                    }
                 },
                 { enableHighAccuracy: true, maximumAge: 60000, timeout: 5000 },
             );
@@ -94,22 +110,10 @@ export default function Home() {
         }
     }, [currentLoc.lat, currentLoc.lng]);
 
-    function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
-        const R = 6371; // km
-        const dLat = ((b.lat - a.lat) * Math.PI) / 180;
-        const dLon = ((b.lng - a.lng) * Math.PI) / 180;
-        const la1 = (a.lat * Math.PI) / 180;
-        const la2 = (b.lat * Math.PI) / 180;
-        const sinDLat = Math.sin(dLat / 2);
-        const sinDLon = Math.sin(dLon / 2);
-        const h = sinDLat * sinDLat + Math.cos(la1) * Math.cos(la2) * sinDLon * sinDLon;
-        return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
-    }
-
     // Debounced search effect
     useEffect(() => {
         let cancelled = false;
-        let timer: any;
+        let timer: ReturnType<typeof setTimeout>;
 
         async function run() {
             const query = q.trim();
@@ -154,9 +158,23 @@ export default function Home() {
     }, [pins, filter]);
 
     function handleCreateAt(lat: number, lng: number) {
-        // Open side form with position preset
         setSelected(null);
         setDraft({ position: { lat, lng }, status: 'a-essayer', tags: [] });
+
+        // Reverse geocode with the French government address API (best-effort)
+        fetch(`https://api-adresse.data.gouv.fr/reverse/?lon=${lng}&lat=${lat}&limit=1`)
+            .then((res) => (res.ok ? res.json() : null))
+            .then((data) => {
+                const props = data?.features?.[0]?.properties;
+                if (!props) return;
+                setDraft((d) => ({
+                    ...d,
+                    address: props.name ?? props.label ?? null,
+                    com_nom: props.city ?? null,
+                    com_insee: props.citycode ?? null,
+                }));
+            })
+            .catch(() => {/* geocoding is best-effort */});
     }
 
     async function submitDraft(e: React.FormEvent) {
@@ -179,6 +197,23 @@ export default function Home() {
                 setPins((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
                 setSelected(updated);
                 setDraft(updated);
+            } else if ((draft as any).position && !(draft as any).osm_id) {
+                // Custom pin created by clicking on the map
+                const pos = (draft as any).position as { lat: number; lng: number };
+                const created = await createCustomPin({
+                    name: draft.name!,
+                    lat: pos.lat,
+                    lng: pos.lng,
+                    address: draft.address ?? null,
+                    com_nom: draft.com_nom ?? null,
+                    com_insee: draft.com_insee ?? null,
+                    status: draft.status as PinStatus,
+                    notes: draft.notes || '',
+                    tags: (draft.tags as string[]) || [],
+                });
+                setPins((prev) => [created, ...prev]);
+                setSelected(created);
+                setDraft(created);
             } else if ((draft as any).osm_id) {
                 const input = {
                     osm_id: (draft as any).osm_id as string,
@@ -241,7 +276,7 @@ export default function Home() {
 
     function cancelDraft() {
         setDraft({});
-        if (!selected) setSelected(null);
+        setSelected(null);
     }
 
     function parseTags(input: string): string[] {
@@ -254,23 +289,28 @@ export default function Home() {
 
     const draftTagsString = Array.isArray(draft.tags) ? (draft.tags as string[]).join(', ') : '';
 
-    // Sidebar content JSX is inlined below to keep element identity stable and avoid input remount/focus loss
-
     if (status === 'loading') {
         return (
-            <div className="flex h-[100dvh] w-full items-center justify-center">
-                <div className="animate-pulse text-sm text-zinc-500">Chargement…</div>
+            <div className="flex h-[100dvh] w-full items-center justify-center bg-zinc-50">
+                <div className="flex flex-col items-center gap-3">
+                    <span className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-600" />
+                    <span className="text-sm font-medium text-zinc-500">Chargement…</span>
+                </div>
             </div>
         );
     }
 
     if (status !== 'authenticated') {
         return (
-            <div className="flex h-[100dvh] w-full items-center justify-center bg-gradient-to-b from-white to-zinc-50">
-                <div className="mx-4 w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-8 shadow-sm">
-                    <h1 className="mb-2 text-center text-2xl font-semibold">Pin Carta</h1>
-                    <p className="mb-6 text-center text-sm text-zinc-600">Connectez-vous pour enregistrer vos restaurants favoris.</p>
-                    <button onClick={() => signIn('google')} className="flex w-full items-center justify-center gap-2 rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700">
+            <div className="flex h-[100dvh] w-full items-center justify-center bg-gradient-to-br from-zinc-50 via-white to-zinc-100">
+                <div className="mx-4 w-full max-w-sm rounded-3xl border border-zinc-200/80 bg-white/90 p-8 shadow-xl shadow-black/5 backdrop-blur-xl sm:max-w-md sm:p-10">
+                    <div className="mb-1 text-center text-3xl">📍</div>
+                    <h1 className="mb-1 text-center text-2xl font-bold tracking-tight text-zinc-900">Pin Carta</h1>
+                    <p className="mb-8 text-center text-sm text-zinc-500">Enregistrez et retrouvez vos restaurants favoris.</p>
+                    <button
+                        onClick={() => signIn('google')}
+                        className="flex w-full items-center justify-center gap-2.5 rounded-2xl bg-zinc-900 px-4 py-3 text-sm font-medium text-white shadow-sm transition-colors hover:bg-zinc-800"
+                    >
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="h-5 w-5">
                             <path
                                 fill="#FFC107"
@@ -286,97 +326,118 @@ export default function Home() {
                             />
                             <path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.086-4.103,5.477l6.191,5.238 C35.888,35.221,44,30.5,44,20.083z" />
                         </svg>
-                        <span>Se connecter avec Google</span>
+                        <span>Continuer avec Google</span>
                     </button>
+                    <p className="mt-4 text-center text-[11px] text-zinc-500">Vos données restent privées et sécurisées.</p>
                 </div>
             </div>
         );
     }
 
+    const panelProps = {
+        q,
+        setQ,
+        searching,
+        results,
+        setResults,
+        filter,
+        setFilter,
+        draft,
+        setDraft,
+        selected,
+        removeSelected,
+        cancelDraft,
+        submitDraft,
+        draftTagsString,
+        parseTags,
+    };
+
     return (
-        <div className="relative h-[100dvh] w-full">
-            {/* Header */}
-            <header className="pointer-events-none absolute inset-x-0 top-0 z-[1001] flex items-center justify-between px-4 py-2">
-                <div className="pointer-events-auto rounded bg-white/80 px-2 py-1 text-sm font-medium text-zinc-700 backdrop-blur">Pin Carta</div>
-                <button onClick={() => signOut()} className="pointer-events-auto rounded bg-zinc-800/80 px-3 py-1 text-xs text-white backdrop-blur hover:bg-zinc-800">
-                    Se déconnecter
-                </button>
-            </header>
-
-            {/* Map always full-viewport */}
-            <main className="relative z-0 h-[100dvh] w-full">
-                <SearchBar
-                    q={q}
-                    setQ={setQ}
-                    searching={searching}
-                    results={results}
-                    setResults={setResults}
-                    setFocusAt={setFocusAt}
-                    focusAt={focusAt}
-                    onSelectResult={(r) => {
-                        // If already saved, select it; else prepare draft tied to this place
-                        const existing = pins.find((p) => p.osm_id === r.osm_id);
-                        if (existing) {
-                            setSelected(existing);
-                            setDraft(existing);
-                        } else {
-                            const name = r.name || r.brand || r.operator || '(sans nom)';
-                            setSelected(null);
-                            setDraft({
-                                osm_id: r.osm_id,
-                                name,
-                                address: r.address,
-                                com_insee: r.com_insee,
-                                com_nom: r.com_nom,
-                                opening_hours: (r as any).opening_hours ?? null,
-                                position: { lat: r.lat, lng: r.lng },
-                                status: 'a-essayer',
-                                tags: [],
-                                notes: '',
-                            } as any);
-                        }
-                    }}
-                />
-                <MapView
-                    pins={filteredPins}
-                    onMapClick={handleCreateAt}
-                    onMarkerClick={onMarkerClick}
-                    onCenterChange={(lat, lng) => {
-                        userMovedRef.current = true;
-                        setSortCenter({ lat, lng });
-                    }}
-                    center={currentLoc}
-                    focusAt={focusAt}
-                    focusZoom={17}
-                    onFocusMarkerClick={(lat, lng) => handleCreateAt(lat, lng)}
-                />
-
-                {/* Unified bottom panel (all sizes) */}
-                <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[1000] flex justify-center">
-                    <div className="pointer-events-auto w-full max-w-xl rounded-t-2xl border-t border-zinc-200 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80">
-                        <Panel
+        <div className="h-[100dvh] w-full">
+            {view === 'addresses' ? (
+                /* Addresses view: full-screen list, no map */
+                <div className="relative h-full">
+                    <NavBar activeView={view} onChangeView={setView} onSignOut={() => signOut()} />
+                    <SavedAddresses
+                        pins={pins}
+                        filter={filter}
+                        setFilter={setFilter}
+                        onSelectPin={(pin) => {
+                            onMarkerClick(pin);
+                            setFocusAt(pin.position);
+                            setView('map');
+                        }}
+                        sortCenter={sortCenter}
+                    />
+                </div>
+            ) : (
+                /* Map view: two-column on desktop, overlay sheet on mobile */
+                <div className="relative h-full md:flex">
+                    {/* Left column: map area */}
+                    <div className="relative flex-1 min-w-0 h-full">
+                        <NavBar activeView={view} onChangeView={setView} onSignOut={() => signOut()} />
+                        <SearchBar
                             q={q}
                             setQ={setQ}
                             searching={searching}
                             results={results}
                             setResults={setResults}
-                            filter={filter}
-                            setFilter={setFilter}
-                            draft={draft}
-                            setDraft={setDraft}
-                            selected={selected}
-                            removeSelected={removeSelected}
-                            cancelDraft={cancelDraft}
-                            submitDraft={submitDraft}
-                            draftTagsString={draftTagsString}
-                            parseTags={parseTags}
-                            filteredPins={filteredPins}
-                            onMarkerClick={onMarkerClick}
                             setFocusAt={setFocusAt}
+                            focusAt={focusAt}
+                            onSelectResult={(r) => {
+                                const existing = pins.find((p) => p.osm_id === r.osm_id);
+                                if (existing) {
+                                    setSelected(existing);
+                                    setDraft(existing);
+                                } else {
+                                    const name = r.name || r.brand || r.operator || '(sans nom)';
+                                    setSelected(null);
+                                    setDraft({
+                                        osm_id: r.osm_id,
+                                        name,
+                                        address: r.address,
+                                        com_insee: r.com_insee,
+                                        com_nom: r.com_nom,
+                                        opening_hours: (r as any).opening_hours ?? null,
+                                        position: { lat: r.lat, lng: r.lng },
+                                        status: 'a-essayer',
+                                        tags: [],
+                                        notes: '',
+                                    } as any);
+                                }
+                            }}
+                        />
+                        <MapView
+                            pins={filteredPins}
+                            onMapClick={handleCreateAt}
+                            onMarkerClick={onMarkerClick}
+                            onCenterChange={(lat, lng) => {
+                                userMovedRef.current = true;
+                                setSortCenter({ lat, lng });
+                            }}
+                            center={currentLoc}
+                            focusAt={focusAt}
+                            focusZoom={17}
+                            onFocusMarkerClick={(lat, lng) => handleCreateAt(lat, lng)}
+                            mobilePanelPeekHeight={PANEL_PEEK_HEIGHT_PX}
+                            desktopSidebarWidth={DESKTOP_SIDEBAR_WIDTH_PX}
                         />
                     </div>
+
+                    {/* Mobile: fixed bottom sheet (hidden on md+) */}
+                    <div className="md:hidden pointer-events-none fixed inset-x-0 bottom-0 z-[1000] flex justify-center px-0 sm:px-4 sm:pb-4">
+                        <div className="pointer-events-auto w-full max-w-xl rounded-t-3xl border border-zinc-200/80 bg-white/95 shadow-xl shadow-black/10 backdrop-blur-xl sm:rounded-3xl supports-[backdrop-filter]:bg-white/85">
+                            <Panel variant="sheet" {...panelProps} />
+                        </div>
+                    </div>
+
+                    {/* Desktop: right sidebar (hidden below md) */}
+                    {/* pt accounts for the fixed NavBar height */}
+                    <div className="hidden md:flex flex-col w-[380px] shrink-0 h-full border-l border-zinc-200 bg-white overflow-y-auto pt-[calc(3.5rem+env(safe-area-inset-top,0px))]">
+                        <Panel variant="sidebar" {...panelProps} />
+                    </div>
                 </div>
-            </main>
+            )}
         </div>
     );
 }

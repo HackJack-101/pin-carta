@@ -4,11 +4,11 @@ import { getUserDb } from '@/lib/userDb';
 
 export const runtime = 'nodejs';
 
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     try {
         const session = await auth();
         if (!session?.user?.email) return new Response('Unauthorized', { status: 401 });
-        const id = params.id;
+        const { id } = await params;
         const body = await req.json();
         const { status, notes = '', tags = [] } = body || {};
         if (!status)
@@ -37,11 +37,11 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     try {
         const session = await auth();
         if (!session?.user?.email) return new Response('Unauthorized', { status: 401 });
-        const id = params.id;
+        const { id } = await params;
         const db = getUserDb();
         const info = db.prepare(`DELETE FROM user_pins WHERE id = ? AND user_email = ?`).run(id, session.user.email);
         if (info.changes === 0)

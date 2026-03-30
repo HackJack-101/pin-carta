@@ -88,6 +88,16 @@ function initUserDb(db: Database.Database) {
         }
     }
 
+    // Add custom-pin columns if missing (idempotent)
+    const currentCols: Array<{ name: string }> = db.prepare('PRAGMA table_info(user_pins)').all() as any;
+    const colNames = currentCols.map((c) => c.name);
+    if (!colNames.includes('custom_name'))     db.exec('ALTER TABLE user_pins ADD COLUMN custom_name     TEXT');
+    if (!colNames.includes('custom_lat'))      db.exec('ALTER TABLE user_pins ADD COLUMN custom_lat      REAL');
+    if (!colNames.includes('custom_lng'))      db.exec('ALTER TABLE user_pins ADD COLUMN custom_lng      REAL');
+    if (!colNames.includes('custom_address'))  db.exec('ALTER TABLE user_pins ADD COLUMN custom_address  TEXT');
+    if (!colNames.includes('custom_com_nom'))  db.exec('ALTER TABLE user_pins ADD COLUMN custom_com_nom  TEXT');
+    if (!colNames.includes('custom_com_insee'))db.exec('ALTER TABLE user_pins ADD COLUMN custom_com_insee TEXT');
+
     // Ensure a default user exists (useful for legacy/migrations in dev)
     const now = new Date().toISOString();
     db.prepare(`INSERT OR IGNORE INTO users (email, name, image, created_at) VALUES (?, ?, ?, ?)`).run('j.batista@citron.io', 'Default User', null, now);

@@ -22,6 +22,7 @@
 html,
 body {
     height: 100%;
+    overflow-x: hidden;
 }
 
 body {
@@ -29,6 +30,12 @@ body {
     color: var(--foreground);
     font-family: Arial, Helvetica, sans-serif;
     -webkit-tap-highlight-color: transparent;
+}
+
+button,
+[role='button'],
+a {
+    touch-action: manipulation;
 }
 
 /* Support iOS safe-area when using full-viewport UIs */
@@ -39,21 +46,32 @@ body {
     --safe-left: env(safe-area-inset-left);
 }
 
-:root {
-    /* Fix: was written as ::root, which breaks CSS vars in Safari/iOS */
-    --background: #ffffff;
-    --foreground: #171717;
-
-    /* Support iOS safe-area when using full-viewport UIs */
-    --safe-top: env(safe-area-inset-top);
-    --safe-right: env(safe-area-inset-right);
-    --safe-bottom: env(safe-area-inset-bottom);
-    --safe-left: env(safe-area-inset-left);
-}
-
 /* Ensure placeholders remain readable on translucent backgrounds */
 input::placeholder,
 textarea::placeholder {
-    color: #9ca3af; /* zinc-400 */
+    color: #71717a; /* zinc-500 — meets WCAG AA contrast on white */
     opacity: 1; /* override iOS/Safari lower opacity */
+}
+
+/* Sidebar width CSS variable — used by SearchBar to avoid overlapping the desktop panel.
+   Keep in sync with DESKTOP_SIDEBAR_WIDTH_PX in src/lib/layout.ts. */
+:root {
+    --sidebar-width: 0px;
+}
+@media (min-width: 768px) {
+    :root {
+        --sidebar-width: 380px;
+    }
+}
+
+/* Push Leaflet bottom controls above the collapsed bottom sheet (mobile, peek ~134px) */
+.leaflet-bottom {
+    bottom: calc(8.5rem + env(safe-area-inset-bottom, 0px)) !important;
+}
+
+/* At md+ the mobile sheet is gone (md:hidden) and the panel is a sidebar — minimal clearance */
+@media (min-width: 768px) {
+    .leaflet-bottom {
+        bottom: calc(1rem + env(safe-area-inset-bottom, 0px)) !important;
+    }
 }
