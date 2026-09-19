@@ -11,6 +11,7 @@ import SavedAddresses from '@/components/SavedAddresses';
 import SearchBar from '@/components/SearchBar';
 import { PinStatus, RestaurantPin, type SearchResult } from '@/types';
 import { listUserPins, createUserPin, createCustomPin, updateUserPin, deleteUserPin } from '@/lib/userPins';
+import { ApiError } from '@/lib/apiError';
 import { PANEL_PEEK_HEIGHT_PX, DESKTOP_SIDEBAR_WIDTH_PX } from '@/lib/layout';
 
 const PARIS_CENTER = { lat: 48.8566, lng: 2.3522 } as const;
@@ -226,8 +227,8 @@ export default function Home() {
                     setPins((prev) => [created, ...prev]);
                     setSelected(created);
                     setDraft(created);
-                } catch (err: any) {
-                    if ((err as any).code === 409) {
+                } catch (err) {
+                    if (err instanceof ApiError && err.status === 409) {
                         // Already exists: select existing pin
                         const existing = pins.find((p) => p.osm_id === (draft as any).osm_id);
                         if (existing) {

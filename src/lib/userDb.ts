@@ -1,6 +1,7 @@
-import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
+
+import Database from 'better-sqlite3';
 
 function ensureDir(p: string) {
     const dir = path.dirname(p);
@@ -42,7 +43,7 @@ function initUserDb(db: Database.Database) {
 
     // Handle user_pins table (create or migrate to have user_email and scoped unique)
     const hasTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='user_pins'").get();
-    const cols: Array<{ name: string }> = hasTable ? (db.prepare('PRAGMA table_info(user_pins)').all() as any) : [];
+    const cols: Array<{ name: string }> = hasTable ? (db.prepare('PRAGMA table_info(user_pins)').all() as unknown as { name: string }[]) : [];
     const hasUserEmail = cols.some((c) => c.name === 'user_email');
     if (!hasTable) {
         db.exec(
@@ -89,7 +90,7 @@ function initUserDb(db: Database.Database) {
     }
 
     // Add custom-pin columns if missing (idempotent)
-    const currentCols: Array<{ name: string }> = db.prepare('PRAGMA table_info(user_pins)').all() as any;
+    const currentCols: Array<{ name: string }> = db.prepare('PRAGMA table_info(user_pins)').all() as { name: string }[];
     const colNames = currentCols.map((c) => c.name);
     if (!colNames.includes('custom_name'))     db.exec('ALTER TABLE user_pins ADD COLUMN custom_name     TEXT');
     if (!colNames.includes('custom_lat'))      db.exec('ALTER TABLE user_pins ADD COLUMN custom_lat      REAL');
