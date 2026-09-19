@@ -4,6 +4,8 @@ import path from 'path';
 import Database from 'better-sqlite3';
 import { NextRequest } from 'next/server';
 
+import { getErrorMessage } from '@/lib/errors';
+
 export const runtime = 'nodejs';
 
 function resolveDbPath(): string {
@@ -65,12 +67,12 @@ export async function GET(req: NextRequest) {
                 'Cache-Control': 'no-store',
             },
         });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('/api/search error', err);
         return new Response(
             JSON.stringify({
                 error: 'Search failed',
-                details: String(err?.message || err),
+                details: getErrorMessage(err),
             }),
             {
                 status: 500,

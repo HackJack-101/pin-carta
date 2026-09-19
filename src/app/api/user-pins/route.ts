@@ -5,14 +5,10 @@ import Database from 'better-sqlite3';
 import { NextRequest } from 'next/server';
 
 import { auth } from '@/auth';
+import { getErrorMessage } from '@/lib/errors';
 import { getUserDb } from '@/lib/userDb';
 
 export const runtime = 'nodejs';
-
-function ensureDir(p: string) {
-    const dir = path.dirname(p);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-}
 
 function resolvePlacesDb(): string {
     const envPath = process.env.DB_PATH?.trim();
@@ -32,12 +28,39 @@ function getPlacesDb() {
     return placesDb!;
 }
 
-function hydratePins(rows: any[]) {
+interface UserPinRow {
+    id: string;
+    osm_id: string;
+    status: string;
+    notes: string | null;
+    tags: string | null;
+    created_at: string;
+    updated_at: string;
+    custom_name: string | null;
+    custom_lat: number | null;
+    custom_lng: number | null;
+    custom_address: string | null;
+    custom_com_nom: string | null;
+    custom_postal_code: string | null;
+}
+
+interface PlaceRow {
+    osm_id: string;
+    name: string | null;
+    address: string | null;
+    postal_code: string | null;
+    com_nom: string | null;
+    opening_hours: string | null;
+    lng: number;
+    lat: number;
+}
+
+function hydratePins(rows: UserPinRow[]) {
     const pdb = getPlacesDb();
-    const stmt = pdb.prepare(`SELECT osm_id, name, address, postal_code, com_nom, opening_hours, X as lng, Y as lat FROM places WHERE osm_id = ? LIMIT 1`);
+    const stmt = pdb.prepare<[string], PlaceRow>(`SELECT osm_id, name, address, postal_code, com_nom, opening_hours, X as lng, Y as lat FROM places WHERE osm_id = ? LIMIT 1`);
     return rows.map((r) => {
         const isCustom = r.osm_id?.startsWith('custom_');
-        const place = isCustom ? null : (stmt.get(r.osm_id) as any);
+        const place = isCustom ? null : stmt.get(r.osm_id);
         const pos = place
             ? { lat: place.lat as number, lng: place.lng as number }
             : isCustom && r.custom_lat != null
@@ -73,7 +96,9 @@ export async function GET() {
         if (!session?.user?.email) return new Response('Unauthorized', { status: 401 });
 
         const db = getUserDb();
-        const rows = db.prepare(`SELECT id, osm_id, status, notes, tags, created_at, updated_at, custom_name, custom_lat, custom_lng, custom_address, custom_com_nom, custom_postal_code FROM user_pins WHERE user_email = ?`).all(session.user.email);
+        const rows = db
+            .prepare<[string], UserPinRow>(`SELECT id, osm_id, status, notes, tags, created_at, updated_at, custom_name, custom_lat, custom_lng, custom_address, custom_com_nom, custom_postal_code FROM user_pins WHERE user_email = ?`)
+            .all(session.user.email);
         const pins = hydratePins(rows);
         return new Response(JSON.stringify({ pins }), {
             status: 200,
@@ -82,7 +107,7 @@ export async function GET() {
                 'Cache-Control': 'no-store',
             },
         });
-    } catch (e: any) {
+    } catch (e: unknown) {
         console.error('/api/user-pins GET error', e);
         return new Response(JSON.stringify({ error: 'Failed to load user pins' }), {
             status: 500,
@@ -137,8 +162,8 @@ export async function POST(req: NextRequest) {
         );
         try {
             stmt.run(_id, _osm_id, status, notes, JSON.stringify(tags), createdAt || now, updatedAt || now, session.user.email, _custom_name, _custom_lat, _custom_lng, _custom_address, _custom_com_nom, _custom_postal_code);
-        } catch (err: any) {
-            if (String(err?.message || err).includes('UNIQUE')) {
+        } catch (err: unknown) {
+            if (getErrorMessage(err).includes('UNIQUE')) {
                 return new Response(
                     JSON.stringify({ error: 'duplicate', reason: 'osm_id already saved' }),
                     { status: 409 },
@@ -146,13 +171,15 @@ export async function POST(req: NextRequest) {
             }
             throw err;
         }
-        const row = db.prepare(`SELECT id, osm_id, status, notes, tags, created_at, updated_at, custom_name, custom_lat, custom_lng, custom_address, custom_com_nom, custom_postal_code FROM user_pins WHERE id = ?`).get(_id);
+        const row = db
+            .prepare<[string], UserPinRow>(`SELECT id, osm_id, status, notes, tags, created_at, updated_at, custom_name, custom_lat, custom_lng, custom_address, custom_com_nom, custom_postal_code FROM user_pins WHERE id = ?`)
+            .get(_id)!;
         const [pin] = hydratePins([row]);
         return new Response(JSON.stringify({ pin }), {
             status: 201,
             headers: { 'Content-Type': 'application/json' },
         });
-    } catch (e: any) {
+    } catch (e: unknown) {
         console.error('/api/user-pins POST error', e);
         return new Response(JSON.stringify({ error: 'Failed to create pin' }), {
             status: 500,

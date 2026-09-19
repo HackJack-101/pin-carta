@@ -109,12 +109,14 @@ export default function Home() {
         if (!userMovedRef.current) {
             setSortCenter(currentLoc);
         }
+        // currentLoc is read via the ref-guarded branch above and intentionally
+        // omitted so this effect only re-runs when the location itself changes.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentLoc.lat, currentLoc.lng]);
 
     // Debounced search effect
     useEffect(() => {
         let cancelled = false;
-        let timer: ReturnType<typeof setTimeout>;
 
         async function run() {
             const query = q.trim();
@@ -146,11 +148,14 @@ export default function Home() {
             }
         }
 
-        timer = setTimeout(run, 250);
+        const timer = setTimeout(run, 250);
         return () => {
             cancelled = true;
             clearTimeout(timer);
         };
+        // sortCenter/currentLoc are read for proximity sorting but intentionally
+        // excluded by value so the debounce only restarts on query or sort-center change.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [q, sortCenter.lat, sortCenter.lng]);
 
     const filteredPins = useMemo(() => {
@@ -198,9 +203,9 @@ export default function Home() {
                 setPins((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
                 setSelected(updated);
                 setDraft(updated);
-            } else if ((draft as any).position && !(draft as any).osm_id) {
+            } else if (draft.position && !draft.osm_id) {
                 // Custom pin created by clicking on the map
-                const pos = (draft as any).position as { lat: number; lng: number };
+                const pos = draft.position;
                 const created = await createCustomPin({
                     name: draft.name!,
                     lat: pos.lat,
@@ -215,9 +220,9 @@ export default function Home() {
                 setPins((prev) => [created, ...prev]);
                 setSelected(created);
                 setDraft(created);
-            } else if ((draft as any).osm_id) {
+            } else if (draft.osm_id) {
                 const input = {
-                    osm_id: (draft as any).osm_id as string,
+                    osm_id: draft.osm_id,
                     status: draft.status as PinStatus,
                     notes: draft.notes || '',
                     tags: (draft.tags as string[]) || [],
@@ -230,7 +235,7 @@ export default function Home() {
                 } catch (err) {
                     if (err instanceof ApiError && err.status === 409) {
                         // Already exists: select existing pin
-                        const existing = pins.find((p) => p.osm_id === (draft as any).osm_id);
+                        const existing = pins.find((p) => p.osm_id === draft.osm_id);
                         if (existing) {
                             setSelected(existing);
                             setDraft(existing);
@@ -239,7 +244,7 @@ export default function Home() {
                             try {
                                 const reload = await listUserPins();
                                 setPins(reload);
-                                const found = reload.find((p) => p.osm_id === (draft as any).osm_id);
+                                const found = reload.find((p) => p.osm_id === draft.osm_id);
                                 if (found) {
                                     setSelected(found);
                                     setDraft(found);
@@ -336,11 +341,6 @@ export default function Home() {
     }
 
     const panelProps = {
-        q,
-        setQ,
-        searching,
-        results,
-        setResults,
         filter,
         setFilter,
         draft,
@@ -399,12 +399,12 @@ export default function Home() {
                                         address: r.address,
                                         postal_code: r.postal_code,
                                         com_nom: r.com_nom,
-                                        opening_hours: (r as any).opening_hours ?? null,
+                                        opening_hours: r.opening_hours ?? null,
                                         position: { lat: r.lat, lng: r.lng },
                                         status: 'a-essayer',
                                         tags: [],
                                         notes: '',
-                                    } as any);
+                                    });
                                 }
                             }}
                         />

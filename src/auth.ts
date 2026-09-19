@@ -24,7 +24,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         async signIn({ user }) {
             if (user?.email) {
                 try {
-                    upsertUser(user.email, user.name, (user as any).image || null);
+                    upsertUser(user.email, user.name, user.image || null);
                 } catch (e) {
                     console.error('Failed to upsert user during signIn', e);
                 }
@@ -32,7 +32,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             }
             return false;
         },
-        async jwt({ token, account, profile }) {
+        async jwt({ token }) {
             // token.email already present; nothing special needed
             return token;
         },

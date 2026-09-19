@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import type { LayerGroup, LeafletMouseEvent, Map as LeafletMap, Marker } from 'leaflet';
 import type { RestaurantPin } from '@/types';
 
 // We import Leaflet dynamically inside effects to avoid SSR issues.
@@ -34,10 +35,10 @@ export default function MapView({
     mobilePanelPeekHeight = 0,
     desktopSidebarWidth = 0,
 }: MapViewProps) {
-    const mapRef = useRef<any>(null);
+    const mapRef = useRef<LeafletMap | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
-    const markersLayerRef = useRef<any>(null);
-    const focusMarkerRef = useRef<any>(null);
+    const markersLayerRef = useRef<LayerGroup | null>(null);
+    const focusMarkerRef = useRef<Marker | null>(null);
     const onCenterChangeRef = useRef<((lat: number, lng: number) => void) | null>(null);
     const suppressNextCenterRef = useRef<boolean>(false);
     const mobilePanelPeekHeightRef = useRef(mobilePanelPeekHeight);
@@ -50,7 +51,7 @@ export default function MapView({
     useEffect(() => { desktopSidebarWidthRef.current = desktopSidebarWidth; }, [desktopSidebarWidth]);
 
     /** Returns an adjusted LatLng so the target point lands in the center of the visible map area. */
-    function offsetCenter(map: any, lat: number, lng: number, targetZoom: number): [number, number] {
+    function offsetCenter(map: LeafletMap, lat: number, lng: number, targetZoom: number): [number, number] {
         const isMobile = window.innerWidth < 768;
         const offsetX = isMobile ? 0 : desktopSidebarWidthRef.current / 2;
         const offsetY = isMobile ? mobilePanelPeekHeightRef.current / 2 : 0;
@@ -62,7 +63,7 @@ export default function MapView({
 
     // Keep latest onCenterChange in a ref so event handler can call it
     useEffect(() => {
-        (onCenterChangeRef as any).current = onCenterChange;
+        onCenterChangeRef.current = onCenterChange ?? null;
     }, [onCenterChange]);
 
     // Init map once
@@ -88,7 +89,7 @@ export default function MapView({
             }).addTo(map);
 
             if (onMapClick) {
-                map.on('click', (e: any) => {
+                map.on('click', (e: LeafletMouseEvent) => {
                     const { lat, lng } = e.latlng;
                     onMapClick(lat, lng);
                 });
@@ -96,12 +97,12 @@ export default function MapView({
 
             // Emit center changes
             const handleMoveEnd = () => {
-                if ((suppressNextCenterRef as any).current) {
-                    (suppressNextCenterRef as any).current = false;
+                if (suppressNextCenterRef.current) {
+                    suppressNextCenterRef.current = false;
                     return;
                 }
                 const c = map.getCenter();
-                const fn = (onCenterChangeRef as any).current as ((lat: number, lng: number) => void) | undefined;
+                const fn = onCenterChangeRef.current;
                 if (fn) fn(c.lat, c.lng);
             };
             map.on('moveend', handleMoveEnd);
@@ -114,7 +115,7 @@ export default function MapView({
             map.zoomControl.setPosition('bottomright');
 
             // Add a control button to center on user's current location
-            const locateControl: any = (L.control as any)({ position: 'bottomright' });
+            const locateControl = new L.Control({ position: 'bottomright' });
             locateControl.onAdd = function () {
                 const container = L.DomUtil.create('div', 'leaflet-bar');
                 const btn = L.DomUtil.create('button', '', container) as HTMLButtonElement;
@@ -143,7 +144,7 @@ export default function MapView({
                     navigator.geolocation.getCurrentPosition(
                         (pos) => {
                             const { latitude, longitude } = pos.coords;
-                            (suppressNextCenterRef as any).current = true;
+                            suppressNextCenterRef.current = true;
                             map.flyTo([latitude, longitude], 18, { duration: 0.5 });
                             btn.disabled = false;
                         },
@@ -198,7 +199,7 @@ export default function MapView({
         if (!mapReady || !mapRef.current) return;
         if (focusAt) return;
         const map = mapRef.current;
-        (suppressNextCenterRef as any).current = true;
+        suppressNextCenterRef.current = true;
         const [adjLat, adjLng] = offsetCenter(map, center.lat, center.lng, zoom);
         map.flyTo([adjLat, adjLng], zoom, { duration: 0.5 });
          
@@ -209,15 +210,15 @@ export default function MapView({
     // finished initializing is not silently dropped.
     useEffect(() => {
         if (!mapReady || !mapRef.current) return;
+        const map = mapRef.current;
         (async () => {
-            const map = mapRef.current;
             const L = await import('leaflet');
             if (focusMarkerRef.current) {
                 focusMarkerRef.current.remove();
                 focusMarkerRef.current = null;
             }
             if (focusAt) {
-                (suppressNextCenterRef as any).current = true;
+                suppressNextCenterRef.current = true;
                 const [adjLat, adjLng] = offsetCenter(map, focusAt.lat, focusAt.lng, focusZoom);
                 map.flyTo([adjLat, adjLng], focusZoom, { duration: 0.5 });
                 // Add a highlighted marker (default icon)
@@ -238,8 +239,9 @@ export default function MapView({
 
     async function redrawMarkers() {
         const L = await import('leaflet');
-        if (!markersLayerRef.current) return;
-        markersLayerRef.current.clearLayers();
+        const layer = markersLayerRef.current;
+        if (!layer) return;
+        layer.clearLayers();
 
         pins.forEach((pin) => {
             const div = document.createElement('div');
@@ -256,14 +258,14 @@ export default function MapView({
             const icon = L.divIcon({
                 className: 'leaflet-div-icon', // keep Leaflet defaults (cursor/positioning)
                 html: div,
-                iconSize: [SIZE, SIZE] as any,
-                iconAnchor: [SIZE / 2, SIZE / 2] as any,
+                iconSize: [SIZE, SIZE] as [number, number],
+                iconAnchor: [SIZE / 2, SIZE / 2] as [number, number],
             });
             const marker = L.marker([pin.position.lat, pin.position.lng], {
                 icon,
                 riseOnHover: true,
             });
-            marker.addTo(markersLayerRef.current);
+            marker.addTo(layer);
             marker.bindTooltip(pin.name, { permanent: false, direction: 'top' });
             if (onMarkerClick) {
                 marker.on('click', () => onMarkerClick(pin));

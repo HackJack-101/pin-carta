@@ -208,14 +208,14 @@ async function main() {
             // rollback if in txn
             try {
                 db.exec('ROLLBACK;');
-            } catch (_) {}
+            } catch {}
             console.error('Error while parsing/importing CSV:', err.message || err);
             process.exitCode = 1;
         });
     } catch (e) {
         try {
             db.exec('ROLLBACK;');
-        } catch (_) {}
+        } catch {}
         console.error('Failed to import CSV:', e.message || e);
         process.exitCode = 1;
     } finally {
@@ -223,7 +223,7 @@ async function main() {
         const closeDb = () => {
             try {
                 db.close();
-            } catch (_) {}
+            } catch {}
         };
         // Close after the current tick to allow 'end' handler to run commit first
         parser.on('end', () => setImmediate(closeDb));

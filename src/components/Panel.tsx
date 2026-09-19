@@ -1,16 +1,12 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import type { Dispatch, SetStateAction, FormEvent } from 'react';
-import { PinStatus, PinStatusLabel, RestaurantPin, type SearchResult } from '@/types';
+import type { Dispatch, FormEvent, SetStateAction } from 'react';
+
 import { PANEL_PEEK_HEIGHT_PX } from '@/lib/layout';
+import { PinStatus, PinStatusLabel, RestaurantPin } from '@/types';
 
 export interface PanelProps {
-    q: string;
-    setQ: (v: string) => void;
-    searching: boolean;
-    results: SearchResult[];
-    setResults: (v: SearchResult[]) => void;
     filter: 'all' | PinStatus;
     setFilter: (v: 'all' | PinStatus) => void;
     draft: Partial<RestaurantPin> & { position?: { lat: number; lng: number } };
@@ -101,7 +97,7 @@ function EditForm({
     parseTags,
 }: Pick<PanelProps, 'draft' | 'setDraft' | 'selected' | 'removeSelected' | 'cancelDraft' | 'submitDraft' | 'draftTagsString' | 'parseTags'>) {
     const draftOsmId = (draft as RestaurantPin).osm_id;
-    const isCustom = !selected && !draftOsmId && !!(draft as any).position;
+    const isCustom = !selected && !draftOsmId && !!draft.position;
     return (
         <form onSubmit={submitDraft} className="mb-6 space-y-4">
             {isCustom && (
@@ -191,11 +187,6 @@ function EditForm({
 }
 
 export default function Panel({
-    q,
-    setQ,
-    searching,
-    results,
-    setResults,
     filter,
     setFilter,
     draft,
@@ -209,23 +200,22 @@ export default function Panel({
     variant = 'sheet',
 }: PanelProps) {
     const [sheetState, setSheetState] = useState<SheetState>('idle');
+    const [prevHasPlace, setPrevHasPlace] = useState(false);
 
     const draftOsmId = (draft as RestaurantPin).osm_id;
-    const hasPlace = selected || draftOsmId || !!(draft as any).position;
+    const hasPlace = !!(selected || draftOsmId || draft.position);
     const placeName = draft.name || selected?.name || '(sans nom)';
     const placeAddress = (
         [draft.address ?? selected?.address, draft.com_nom ?? selected?.com_nom].filter(Boolean) as string[]
     ).join(', ') || 'Adresse non disponible';
     const placeStatus = (draft.status ?? selected?.status) as PinStatus | undefined;
 
-    // Auto-transition sheet state when a place is selected/deselected
-    useEffect(() => {
-        if (hasPlace) {
-            setSheetState((s) => (s === 'idle' ? 'peek' : s));
-        } else {
-            setSheetState('idle');
-        }
-    }, [hasPlace]);
+    // Auto-transition sheet state when a place is selected/deselected.
+    // Adjusted during render (not in an effect) to avoid an extra cascading render.
+    if (hasPlace !== prevHasPlace) {
+        setPrevHasPlace(hasPlace);
+        setSheetState(hasPlace ? (sheetState === 'idle' ? 'peek' : sheetState) : 'idle');
+    }
 
     // Nudge Leaflet to recalc size after sheet state change animation
     useEffect(() => {

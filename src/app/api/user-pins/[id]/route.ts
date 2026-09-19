@@ -28,7 +28,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
             status: 200,
             headers: { 'Content-Type': 'application/json' },
         });
-    } catch (e: any) {
+    } catch (e: unknown) {
         console.error('/api/user-pins/[id] PUT error', e);
         return new Response(JSON.stringify({ error: 'Failed to update pin' }), {
             status: 500,
@@ -52,7 +52,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
             status: 200,
             headers: { 'Content-Type': 'application/json' },
         });
-    } catch (e: any) {
+    } catch (e: unknown) {
         console.error('/api/user-pins/[id] DELETE error', e);
         return new Response(JSON.stringify({ error: 'Failed to delete pin' }), {
             status: 500,
