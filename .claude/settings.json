@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run lint*)",
+      "Bash(npx tsc --noEmit*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(cat); file=$(printf '%s' \"$f\" | jq -r '.tool_input.file_path // .tool_response.filePath // empty'); if [ -n \"$file\" ] && printf '%s' \"$file\" | grep -qE '\\.(ts|tsx|js|jsx)$'; then npx eslint --fix \"$file\" >/dev/null 2>&1; fi; exit 0",
+            "timeout": 30,
+            "statusMessage": "Linting edited file..."
+          },
+          {
+            "type": "command",
+            "command": "f=$(cat); file=$(printf '%s' \"$f\" | jq -r '.tool_input.file_path // .tool_response.filePath // empty'); if [ -n \"$file\" ] && printf '%s' \"$file\" | grep -qE '\\.(ts|tsx|js|jsx)$'; then out=$(npx tsc --noEmit 2>&1); code=$?; if [ $code -ne 0 ]; then jq -n --arg reason \"$out\" '{decision:\"block\", reason: $reason}'; fi; fi; exit 0",
+            "timeout": 60,
+            "statusMessage": "Type-checking project..."
+          }
+        ]
+      }
+    ]
+  }
+}
