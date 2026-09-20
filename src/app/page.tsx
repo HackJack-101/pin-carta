@@ -285,16 +285,6 @@ export default function Home() {
         setSelected(null);
     }
 
-    function parseTags(input: string): string[] {
-        return input
-            .split(',')
-            .map((s) => s.trim())
-            .filter(Boolean)
-            .slice(0, 10);
-    }
-
-    const draftTagsString = Array.isArray(draft.tags) ? (draft.tags as string[]).join(', ') : '';
-
     if (status === 'loading') {
         return (
             <div className="flex h-[100dvh] w-full items-center justify-center bg-zinc-50">
@@ -349,8 +339,6 @@ export default function Home() {
         removeSelected,
         cancelDraft,
         submitDraft,
-        draftTagsString,
-        parseTags,
     };
 
     return (

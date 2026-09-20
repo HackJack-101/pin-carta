@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import type { Dispatch, FormEvent, SetStateAction } from 'react';
 
+import TagsInput from '@/components/TagsInput';
 import { PANEL_PEEK_HEIGHT_PX } from '@/lib/layout';
 import { PinStatus, PinStatusLabel, RestaurantPin } from '@/types';
 
@@ -15,8 +16,6 @@ export interface PanelProps {
     removeSelected: () => void;
     cancelDraft: () => void;
     submitDraft: (e: FormEvent) => void;
-    draftTagsString: string;
-    parseTags: (s: string) => string[];
     /**
      * 'sheet'   — mobile bottom sheet with idle/peek/open states (default)
      * 'sidebar' — desktop right sidebar, always shows full content
@@ -93,9 +92,7 @@ function EditForm({
     removeSelected,
     cancelDraft,
     submitDraft,
-    draftTagsString,
-    parseTags,
-}: Pick<PanelProps, 'draft' | 'setDraft' | 'selected' | 'removeSelected' | 'cancelDraft' | 'submitDraft' | 'draftTagsString' | 'parseTags'>) {
+}: Pick<PanelProps, 'draft' | 'setDraft' | 'selected' | 'removeSelected' | 'cancelDraft' | 'submitDraft'>) {
     const draftOsmId = (draft as RestaurantPin).osm_id;
     const isCustom = !selected && !draftOsmId && !!draft.position;
     return (
@@ -141,11 +138,10 @@ function EditForm({
             </div>
             <div>
                 <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-zinc-500">Tags</label>
-                <input
-                    className="w-full rounded-xl border border-zinc-200 bg-white p-2.5 text-sm text-zinc-900 caret-zinc-900 transition-colors focus:border-zinc-400 focus:outline-none"
-                    placeholder="italien, terrasse, pas cher…"
-                    value={draftTagsString}
-                    onChange={(e) => setDraft((d) => ({ ...d, tags: parseTags(e.target.value) }))}
+                <TagsInput
+                    tags={(draft.tags as string[]) || []}
+                    onChange={(tags) => setDraft((d) => ({ ...d, tags }))}
+                    placeholder="italien, terrasse, pas-cher…"
                 />
             </div>
             <div>
@@ -195,8 +191,6 @@ export default function Panel({
     removeSelected,
     cancelDraft,
     submitDraft,
-    draftTagsString,
-    parseTags,
     variant = 'sheet',
 }: PanelProps) {
     const [sheetState, setSheetState] = useState<SheetState>('idle');
@@ -253,8 +247,6 @@ export default function Panel({
                                 removeSelected={removeSelected}
                                 cancelDraft={cancelDraft}
                                 submitDraft={submitDraft}
-                                draftTagsString={draftTagsString}
-                                parseTags={parseTags}
                             />
                         </>
                     )}
@@ -352,8 +344,6 @@ export default function Panel({
                                 removeSelected={removeSelected}
                                 cancelDraft={cancelDraft}
                                 submitDraft={submitDraft}
-                                draftTagsString={draftTagsString}
-                                parseTags={parseTags}
                             />
                         </>
                     )}
