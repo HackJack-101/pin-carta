@@ -7,7 +7,9 @@
         "build": "next build",
         "start": "next start",
         "lint": "eslint",
-        "import:sqlite": "node scripts/import_csv_to_sqlite.js"
+        "typecheck": "tsc --noEmit",
+        "import:sqlite": "node scripts/import_csv_to_sqlite.js",
+        "prepare": "husky"
     },
     "dependencies": {
         "better-sqlite3": "^12.11.1",
@@ -28,10 +30,15 @@
         "csv-parse": "^5.5.6",
         "eslint": "^9",
         "eslint-config-next": "16.0.1",
+        "husky": "^9.1.7",
+        "lint-staged": "^17.5.1",
         "prettier": "^3.6.2",
         "tailwindcss": "^4",
         "typescript": "^5",
         "yargs": "^17.7.2"
+    },
+    "lint-staged": {
+        "*.{js,jsx,mjs,cjs,ts,tsx}": "eslint --fix"
     },
     "engines": {
         "node": ">=26"
